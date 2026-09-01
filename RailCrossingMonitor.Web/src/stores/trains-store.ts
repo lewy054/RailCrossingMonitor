@@ -21,10 +21,11 @@ export const useTrainStore = defineStore('trains', () => {
     })
 
     function filterTrains() {
-        let query = searchQuery.value.trim().toLowerCase()
+        const query = searchQuery.value?.trim() ?? ''
 
         if (!query) {
             filteredTrains.value = trains.value
+            return;
         }
 
         filteredTrains.value = trains.value.filter(train =>
