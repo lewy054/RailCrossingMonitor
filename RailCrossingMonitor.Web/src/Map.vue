@@ -17,12 +17,12 @@
 import { ref } from 'vue'
 
 import { useTrainStore } from '@/stores/trains-store'
-import { useTrainMap } from '@/useTrainMap'
+import { useMap } from '@/useMap.ts'
 
 const trainStore = useTrainStore()
 const mapElement = ref<HTMLElement | null>(null)
 
-useTrainMap(mapElement)
+useMap(mapElement)
 </script>
 
 <style scoped>

@@ -2,7 +2,7 @@
   <div class="train-list">
     <div class="pa-4">
       <v-text-field
-          v-model="searchQuery"
+          v-model="trainStore.searchQuery"
           label="Szukaj pociągu"
           prepend-inner-icon="mdi-magnify"
           variant="outlined"
@@ -12,7 +12,7 @@
       />
     </div>
 
-    <v-divider />
+    <v-divider/>
 
     <v-list>
       <v-list-subheader>
@@ -56,13 +56,12 @@
 </template>
 
 <script setup lang="ts">
-import { useTrainStore } from '@/stores/trains-store'
+import {useTrainStore} from '@/stores/trains-store'
 import {ref, watch} from "vue";
 
 const trainStore = useTrainStore()
-const searchQuery = ref('');
 
-watch(searchQuery, () => {
-  trainStore.filterTrains(searchQuery.value)
+watch(() => trainStore.searchQuery, () => {
+  trainStore.filterTrains()
 })
 </script>

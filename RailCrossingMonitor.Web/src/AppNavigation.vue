@@ -5,7 +5,6 @@
           to="/trains"
           prepend-icon="mdi-train"
           title="Pociągi na żywo"
-          disabled
       />
 
       <v-list-item

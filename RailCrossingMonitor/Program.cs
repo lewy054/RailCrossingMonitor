@@ -1,4 +1,5 @@
 ﻿using RailCrossingMonitor.Application;
+using RailCrossingMonitor.Application.Crossing;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -15,6 +16,7 @@ builder.Services.AddCors(options =>
 });
 
 builder.Services.AddHttpClient();
+builder.Services.AddHttpClient<RailwayCrossingService>();
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<TrainStore>();
 
@@ -44,6 +46,14 @@ app.MapGet("/api/health", () =>
 });
 
 app.MapGet("/api/trains", (TrainStore store) => Results.Ok((object?)store.GetAll()));
+app.MapGet("/api/crossings", async (
+    RailwayCrossingService service,
+    CancellationToken cancellationToken) =>
+{
+    var crossings = await service.GetCrossingsAsync(cancellationToken);
+
+    return Results.Ok(crossings);
+});
 
 app.MapHub<TrainHub>("/hubs/trains");
 

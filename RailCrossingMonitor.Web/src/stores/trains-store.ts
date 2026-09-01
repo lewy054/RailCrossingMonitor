@@ -7,9 +7,7 @@ export const useTrainStore = defineStore('trains', () => {
     const trains = ref<TrainViewModel[]>([])
     const filteredTrains = ref<TrainViewModel[]>([])
     const selectedTrainId = ref<number | null>(null)
-
-    const search = ref('')
-
+    const searchQuery = ref('')
     const isLoading = ref(false)
     const error = ref<string | null>(null)
 
@@ -22,11 +20,11 @@ export const useTrainStore = defineStore('trains', () => {
         return trains.value.find(train => train.id === selectedTrainId.value) ?? null
     })
 
-    function filterTrains(query: string) {
-        query = query.trim().toLowerCase()
+    function filterTrains() {
+        let query = searchQuery.value.trim().toLowerCase()
 
         if (!query) {
-            return trains.value
+            filteredTrains.value = trains.value
         }
 
         filteredTrains.value = trains.value.filter(train =>
@@ -51,7 +49,7 @@ export const useTrainStore = defineStore('trains', () => {
             }
 
             trains.value = await response.json()
-            filteredTrains.value = trains.value;
+            filterTrains()
             error.value = null
         } catch (err) {
             console.error('Failed to fetch trains:', err)
@@ -62,10 +60,6 @@ export const useTrainStore = defineStore('trains', () => {
         } finally {
             isLoading.value = false
         }
-    }
-
-    function setSearch(value: string) {
-        search.value = value
     }
 
     function selectTrain(train: TrainViewModel) {
@@ -83,13 +77,13 @@ export const useTrainStore = defineStore('trains', () => {
     return {
         trains,
         filteredTrains,
-        search,
         selectedTrainId,
         selectedTrain,
         trainCount,
         isLoading,
         error,
         connected,
+        searchQuery,
         fetchTrains,
         filterTrains,
         selectTrain,

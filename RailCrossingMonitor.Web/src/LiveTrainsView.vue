@@ -1,7 +1,7 @@
 ﻿<template>
   <div class="live-trains">
     <main class="train-map">
-      <TrainMap />
+      <Map />
     </main>
     <aside class="train-sidebar">
       <TrainList />
@@ -13,15 +13,18 @@
 import { onBeforeUnmount, onMounted } from 'vue'
 
 import TrainList from '@/TrainList.vue'
-import TrainMap from '@/TrainMap.vue'
+import Map from '@/Map.vue'
 import { useTrainStore } from '@/stores/trains-store'
+import {useCrossingStore} from "@/stores/crossing-store.ts";
 
 const trainStore = useTrainStore()
+const crossingStore = useCrossingStore()
 
 let refreshTimer: number | undefined
 
-onMounted(() => {
-  trainStore.fetchTrains()
+onMounted(async () => {
+  await trainStore.fetchTrains()
+  await crossingStore.fetchCrossings()
 
   refreshTimer = window.setInterval(() => {
     trainStore.fetchTrains()
