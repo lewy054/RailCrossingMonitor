@@ -1,0 +1,66 @@
+﻿# Dependencies
+node_modules/
+
+# Build
+dist/
+.vite/
+
+# Vite cache
+node_modules/.vite/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Keep example environment files
+!.env.example
+!.env.*.example
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Package manager caches
+.npm/
+.pnpm-store/
+
+# TypeScript
+*.tsbuildinfo
+
+# ESLint
+.eslintcache
+
+# Prettier
+.prettier-cache
+
+# Vitest
+coverage/
+
+# Cypress
+cypress/screenshots/
+cypress/videos/
+
+# Playwright
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+
+# Storybook
+storybook-static/
+
+# VS Code
+.vscode/
+
+# JetBrains
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+.vs/
