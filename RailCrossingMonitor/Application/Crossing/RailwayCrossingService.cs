@@ -2,6 +2,7 @@
 using System.Globalization;
 using System.Xml.Linq;
 using Microsoft.Extensions.Options;
+using RailCrossingMonitor.Application.Trains;
 using RailCrossingMonitor.Model;
 
 namespace RailCrossingMonitor.Application.Crossing;

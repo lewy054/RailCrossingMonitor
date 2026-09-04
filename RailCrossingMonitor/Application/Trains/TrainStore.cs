@@ -1,8 +1,7 @@
 ﻿using System.Collections.Concurrent;
 using RailCrossingMonitor.Model;
-using RailCrossingMonitor.Models;
 
-namespace RailCrossingMonitor.Application;
+namespace RailCrossingMonitor.Application.Trains;
 
 public sealed class TrainStore
 {

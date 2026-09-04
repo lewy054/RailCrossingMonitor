@@ -1,5 +1,6 @@
 ﻿using RailCrossingMonitor.Application;
 using RailCrossingMonitor.Application.Crossing;
+using RailCrossingMonitor.Application.Trains;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -47,6 +48,5 @@ app.MapGet("/api/crossings/status", async (
     return Results.Ok(crossings);
 });
 
-app.MapHub<TrainHub>("/hubs/trains");
 
 app.Run("http://localhost:5100");

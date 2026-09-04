@@ -3,9 +3,8 @@ using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.Options;
-using RailCrossingMonitor.Models;
 
-namespace RailCrossingMonitor.Application;
+namespace RailCrossingMonitor.Application.Trains;
 
 public sealed class TrainsWorker(
     IHttpClientFactory httpClientFactory,
@@ -50,17 +49,13 @@ public sealed class TrainsWorker(
             }
             catch (Exception ex)
             {
-                logger.LogError(
-                    ex,
-                    "Trains worker failed. Retrying in {RetryDelay}.",
-                    RetryDelay);
+                logger.LogError(ex, "Trains worker failed. Retrying in {RetryDelay}.", RetryDelay);
 
                 try
                 {
                     await Task.Delay(RetryDelay, stoppingToken);
                 }
-                catch (OperationCanceledException)
-                    when (stoppingToken.IsCancellationRequested)
+                catch (OperationCanceledException)when (stoppingToken.IsCancellationRequested)
                 {
                     break;
                 }
@@ -74,37 +69,21 @@ public sealed class TrainsWorker(
     {
         logger.LogInformation("Starting Portal Pasażera connection cycle.");
 
-        // Pobieramy parametry przed uruchomieniem SignalR.
-        var connectionParameters =
-            await GetConnectionParametersAsync(cancellationToken);
+        var connectionParameters = await GetConnectionParametersAsync(cancellationToken);
         var negotiate = await NegotiateAsync(cancellationToken);
 
         await using var connection = CreateConnection(negotiate);
-
         RegisterHandlers(connection, connectionParameters);
-
         logger.LogInformation("Connecting to Portal Pasażera SignalR...");
-
         await connection.StartAsync(cancellationToken);
-
-        logger.LogInformation(
-            "Portal Pasażera SignalR connected. ConnectionId={ConnectionId}",
+        logger.LogInformation("Portal Pasażera SignalR connected. ConnectionId={ConnectionId}",
             connection.ConnectionId);
 
-        // Pierwsza rejestracja parametrów.
-        await RegisterParametersAsync(
-            connection,
-            connectionParameters,
-            cancellationToken);
-
+        await RegisterParametersAsync(connection, connectionParameters, cancellationToken);
         logger.LogInformation("Portal Pasażera registration completed.");
-
         try
         {
-            // Czekamy, dopóki połączenie działa / worker nie zostanie zatrzymany.
-            await Task.Delay(
-                Timeout.InfiniteTimeSpan,
-                cancellationToken);
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
         }
         finally
         {
@@ -116,9 +95,7 @@ public sealed class TrainsWorker(
             }
             catch (Exception ex)
             {
-                logger.LogDebug(
-                    ex,
-                    "Error while stopping Portal Pasażera SignalR connection.");
+                logger.LogDebug(ex, "Error while stopping Portal Pasażera SignalR connection.");
             }
         }
     }
@@ -130,18 +107,10 @@ public sealed class TrainsWorker(
 
         var httpClient = httpClientFactory.CreateClient();
 
-        using var request = new HttpRequestMessage(
-            HttpMethod.Post,
-            options.Value.HubUrl)
-        {
-            Content = JsonContent.Create(new { })
-        };
-
-        using var response =
-            await httpClient.SendAsync(request, cancellationToken);
-
-        var responseBody =
-            await response.Content.ReadAsStringAsync(cancellationToken);
+        using var request = new HttpRequestMessage(HttpMethod.Post, options.Value.HubUrl);
+        request.Content = JsonContent.Create(new { });
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
 
         if (!response.IsSuccessStatusCode)
         {
@@ -152,10 +121,7 @@ public sealed class TrainsWorker(
                 $"Response={responseBody}");
         }
 
-        var negotiate =
-            JsonSerializer.Deserialize<NegotiateResponse>(
-                responseBody,
-                JsonOptions);
+        var negotiate = JsonSerializer.Deserialize<NegotiateResponse>(responseBody, JsonOptions);
 
         if (negotiate is null)
         {
@@ -175,33 +141,24 @@ public sealed class TrainsWorker(
                 "SignalR negotiate response does not contain 'accessToken'.");
         }
 
-        logger.LogDebug(
-            "SignalR negotiate successful. Url={Url}",
-            negotiate.Url);
-
+        logger.LogDebug("SignalR negotiate successful. Url={Url}", negotiate.Url);
         return negotiate;
     }
 
-    private HubConnection CreateConnection(
-        NegotiateResponse negotiate)
+    private static HubConnection CreateConnection(NegotiateResponse negotiate)
     {
-        return new HubConnectionBuilder()
-            .WithUrl(
-                negotiate.Url,
+        return new HubConnectionBuilder().WithUrl(negotiate.Url,
                 httpOptions =>
                 {
-                    httpOptions.AccessTokenProvider =
-                        () => Task.FromResult<string?>(
-                            negotiate.AccessToken);
+                    httpOptions.AccessTokenProvider = () => Task.FromResult(negotiate.AccessToken);
                 })
-            .WithAutomaticReconnect(new[]
-            {
+            .WithAutomaticReconnect([
                 TimeSpan.Zero,
                 TimeSpan.FromSeconds(2),
                 TimeSpan.FromSeconds(5),
                 TimeSpan.FromSeconds(10),
                 TimeSpan.FromSeconds(30)
-            })
+            ])
             .Build();
     }
 
@@ -209,7 +166,6 @@ public sealed class TrainsWorker(
         HubConnection connection,
         ConnectionParameters parameters)
     {
-
         // connection.On<string, List<PortalTrainDto>>(
         //     "TrainStatus",
         //     ProcessTrainStatus);
@@ -224,16 +180,11 @@ public sealed class TrainsWorker(
             {
                 if (payload.ValueKind != JsonValueKind.Array)
                 {
-                    logger.LogWarning(
-                        "TrainStatus payload is not an array. Kind={Kind}",
-                        payload.ValueKind);
-
+                    logger.LogWarning("TrainStatus payload is not an array. Kind={Kind}", payload.ValueKind);
                     return;
                 }
 
-                logger.LogInformation(
-                    "TrainStatus array length: {Length}",
-                    payload.GetArrayLength());
+                logger.LogInformation("TrainStatus array length: {Length}", payload.GetArrayLength());
 
                 if (payload.GetArrayLength() < 2)
                 {
@@ -249,11 +200,7 @@ public sealed class TrainsWorker(
                         PropertyNameCaseInsensitive = true
                     });
 
-                logger.LogInformation(
-                    "TrainStatus parsed. Source={Source}, Count={Count}",
-                    source,
-                    trains?.Count ?? 0);
-
+                logger.LogInformation("TrainStatus parsed. Source={Source}, Count={Count}", source, trains?.Count ?? 0);
                 if (trains is null)
                 {
                     logger.LogWarning("Unable to deserialize trains.");
@@ -264,46 +211,29 @@ public sealed class TrainsWorker(
             }
             catch (Exception ex)
             {
-                logger.LogError(
-                    ex,
-                    "Error processing raw TrainStatus payload.");
+                logger.LogError(ex, "Error processing raw TrainStatus payload.");
             }
         });
 
         connection.Reconnecting += error =>
         {
-            logger.LogWarning(
-                error,
-                "Portal Pasażera SignalR reconnecting...");
-
+            logger.LogWarning(error, "Portal Pasażera SignalR reconnecting...");
             return Task.CompletedTask;
         };
 
         connection.Reconnected += async connectionId =>
         {
-            logger.LogInformation(
-                "Portal Pasażera SignalR reconnected. ConnectionId={ConnectionId}",
-                connectionId);
+            logger.LogInformation("Portal Pasażera SignalR reconnected. ConnectionId={ConnectionId}", connectionId);
 
             try
             {
-                await RegisterParametersAsync(
-                    connection,
-                    parameters,
-                    CancellationToken.None);
+                await RegisterParametersAsync(connection, parameters, CancellationToken.None);
 
-                logger.LogInformation(
-                    "Portal Pasażera parameters registered again after reconnect.");
+                logger.LogInformation("Portal Pasażera parameters registered again after reconnect.");
             }
             catch (Exception ex)
             {
-                logger.LogError(
-                    ex,
-                    "Failed to register Portal Pasażera parameters after reconnect.");
-
-                // Ważne:
-                // Nie rzucamy wyjątku z event handlera.
-                // AutomaticReconnect nadal może działać.
+                logger.LogError(ex, "Failed to register Portal Pasażera parameters after reconnect.");
             }
         };
 
@@ -311,95 +241,55 @@ public sealed class TrainsWorker(
         {
             if (error is null)
             {
-                logger.LogWarning(
-                    "Portal Pasażera SignalR connection closed.");
+                logger.LogWarning("Portal Pasażera SignalR connection closed.");
             }
             else
             {
-                logger.LogWarning(
-                    error,
-                    "Portal Pasażera SignalR connection closed because of an error.");
+                logger.LogWarning(error, "Portal Pasażera SignalR connection closed because of an error.");
             }
 
             return Task.CompletedTask;
         };
     }
 
-    private async Task RegisterParametersAsync(
-        HubConnection connection,
-        ConnectionParameters parameters,
+    private async Task RegisterParametersAsync(HubConnection connection, ConnectionParameters parameters,
         CancellationToken cancellationToken)
     {
-        logger.LogDebug(
-            "Registering Portal Pasażera parameters. TID={Tid}, PID={Pid}",
-            parameters.Tid,
-            parameters.Pid);
-
-        await connection.InvokeAsync(
-            "RegisterParams",
-            Language,
-            Zoom,
-            MinLatitude,
-            MinLongitude,
-            MaxLatitude,
-            MaxLongitude,
-            SelectedTrainNumber,
-            ForcedRefresh,
-            parameters.Tid,
-            parameters.Pid,
-            cancellationToken);
-
+        logger.LogDebug("Registering Portal Pasażera parameters. TID={Tid}, PID={Pid}", parameters.Tid, parameters.Pid);
+        await connection.InvokeAsync("RegisterParams", Language, Zoom, MinLatitude, MinLongitude, MaxLatitude,
+            MaxLongitude, SelectedTrainNumber, ForcedRefresh, parameters.Tid, parameters.Pid, cancellationToken);
         logger.LogDebug("Portal Pasażera parameters registered.");
     }
 
-    private void ProcessTrainStatus(
-        string source,
-        List<PortalTrainDto> trains)
+    private void ProcessTrainStatus(string source, List<PortalTrainDto> trains)
     {
         if (trains.Count == 0)
         {
-            logger.LogDebug(
-                "Received empty TrainStatus from {Source}.",
-                source);
-
+            logger.LogDebug("Received empty TrainStatus from {Source}.", source);
             return;
         }
 
         try
         {
             store.Upsert(trains);
-
-            logger.LogDebug(
-                "TrainStatus processed. Source={Source}, Count={Count}",
-                source,
-                trains.Count);
+            logger.LogDebug("TrainStatus processed. Source={Source}, Count={Count}", source, trains.Count);
         }
         catch (Exception ex)
         {
-            logger.LogError(
-                ex,
-                "Failed to store TrainStatus. Source={Source}, Count={Count}",
-                source,
-                trains.Count);
+            logger.LogError(ex, "Failed to store TrainStatus. Source={Source}, Count={Count}", source, trains.Count);
         }
     }
 
     private async Task<ConnectionParameters> GetConnectionParametersAsync(
         CancellationToken cancellationToken)
     {
-        logger.LogDebug(
-            "Fetching Portal Pasażera connection parameters from {Url}.",
-            options.Value.TokenUrl);
+        logger.LogDebug("Fetching Portal Pasażera connection parameters from {Url}.", options.Value.TokenUrl);
 
         var httpClient = httpClientFactory.CreateClient();
 
-        using var response =
-            await httpClient.GetAsync(
-                options.Value.TokenUrl,
-                cancellationToken);
+        using var response = await httpClient.GetAsync(options.Value.TokenUrl, cancellationToken);
 
-        var html =
-            await response.Content.ReadAsStringAsync(cancellationToken);
+        var html = await response.Content.ReadAsStringAsync(cancellationToken);
 
         if (!response.IsSuccessStatusCode)
         {
@@ -412,24 +302,16 @@ public sealed class TrainsWorker(
         var tid = ExtractJavaScriptVariable(html, "TID");
         var pid = ExtractJavaScriptVariable(html, "PID");
 
-        logger.LogDebug(
-            "Portal Pasażera parameters retrieved successfully.");
+        logger.LogDebug("Portal Pasażera parameters retrieved successfully.");
 
         return new ConnectionParameters(tid, pid);
     }
 
-    private static string ExtractJavaScriptVariable(
-        string html,
-        string variableName)
+    private static string ExtractJavaScriptVariable(string html, string variableName)
     {
-        var pattern =
-            $@"\b(?:var|let|const)\s+{Regex.Escape(variableName)}\s*=\s*[""']([^""']+)[""']";
+        var pattern = $@"\b(?:var|let|const)\s+{Regex.Escape(variableName)}\s*=\s*[""']([^""']+)[""']";
 
-        var match =
-            Regex.Match(
-                html,
-                pattern,
-                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        var match = Regex.Match(html, pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
         if (!match.Success)
         {
@@ -440,15 +322,10 @@ public sealed class TrainsWorker(
         return match.Groups[1].Value;
     }
 
-    private sealed record ConnectionParameters(
-        string Tid,
-        string Pid);
+    private sealed record ConnectionParameters(string Tid, string Pid);
 
     private sealed record NegotiateResponse(
-        [property: JsonPropertyName("url")]
-        string? Url,
-
+        [property: JsonPropertyName("url")] string? Url,
         [property: JsonPropertyName("accessToken")]
         string? AccessToken);
 }
-
