@@ -29,7 +29,8 @@ onMounted(async () => {
 
   refreshTimer = window.setInterval(() => {
     trainStore.fetchTrains()
-  }, 5000)
+    crossingStore.fetchCrossingsStatus()
+  }, 2000)
 })
 
 onBeforeUnmount(() => {

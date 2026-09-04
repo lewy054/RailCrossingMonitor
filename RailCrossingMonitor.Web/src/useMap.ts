@@ -16,8 +16,12 @@ import { useTrainStore } from '@/stores/trains-store'
 import { useCrossingStore } from '@/stores/crossing-store'
 
 import type { TrainViewModel } from '@/train-viewmodel'
-import type { CrossingStatusViewModel } from '@/crossing-status-viewmodel'
-import { CrossingState } from '@/crossing-status-viewmodel'
+import {
+    BarrierState,
+    CrossingState,
+    LightState,
+    type CrossingStatusViewModel
+} from '@/crossing-status-viewmodel'
 
 const trainIcon = '/train.svg'
 
@@ -56,60 +60,95 @@ function getStateLabel(state: CrossingState): string {
 }
 
 function getBarrierColor(crossing: CrossingStatusViewModel): string {
-    if (crossing.barriersDown) {
-        return '#ef4444'
+    switch (crossing.barriers) {
+        case BarrierState.Closed:
+            return '#ef4444'
+        case BarrierState.Closing:
+            return '#f59e0b'
+        case BarrierState.Open:
+            return '#22c55e'
+        case BarrierState.None:
+        case BarrierState.Unknown:
+        default:
+            return '#6b7280'
     }
-
-    if (crossing.barriersClosing) {
-        return '#f59e0b'
-    }
-
-    return '#22c55e'
 }
 
 function getBarrierLabel(crossing: CrossingStatusViewModel): string {
-    if (crossing.barriersDown) {
-        return 'ZAMKNIĘTE'
+    switch (crossing.barriers) {
+        case BarrierState.None:
+            return 'BRAK'
+        case BarrierState.Open:
+            return 'PODNIESIONE'
+        case BarrierState.Closing:
+            return 'ZAMYKAJĄ SIĘ'
+        case BarrierState.Closed:
+            return 'ZAMKNIĘTE'
+        default:
+            return 'NIEZNANE'
     }
-
-    if (crossing.barriersClosing) {
-        return 'ZAMYKAJĄ SIĘ'
-    }
-
-    return 'OTWARTE'
 }
 
 function getLightColor(crossing: CrossingStatusViewModel): string {
-    return crossing.lightsActive ? '#ef4444' : '#9ca3af'
+    switch (crossing.lights) {
+        case LightState.FlashingRed:
+            return '#ef4444'
+        case LightState.Off:
+            return '#9ca3af'
+        case LightState.None:
+        case LightState.Unknown:
+        default:
+            return '#6b7280'
+    }
 }
 
 function getLightLabel(crossing: CrossingStatusViewModel): string {
-    return crossing.lightsActive ? 'AKTYWNE' : 'WYŁĄCZONE'
+    switch (crossing.lights) {
+        case LightState.None:
+            return 'BRAK'
+        case LightState.Off:
+            return 'WYŁĄCZONE'
+        case LightState.FlashingRed:
+            return 'AKTYWNE'
+        default:
+            return 'NIEZNANE'
+    }
 }
 
-/**
- * Tworzy małą ikonę przejazdu.
- *
- * Na mapie pokazujemy tylko:
- * - kolor obwódki / środka -> stan przejazdu,
- * - małą kropkę -> światła,
- * - małą belkę -> stan rogatek.
- *
- * Całe informacje są pokazane dopiero w tooltipie.
- */
+function getBarrierRotation(crossing: CrossingStatusViewModel): number | null {
+    switch (crossing.barriers) {
+        case BarrierState.Closed:
+            return 0
+        case BarrierState.Closing:
+            return -25
+        case BarrierState.Open:
+            return -55
+        default:
+            return null
+    }
+}
+
 function createCrossingSvg(crossing: CrossingStatusViewModel): string {
     const stateColor = getStateColor(crossing.state)
-    const barrierColor = getBarrierColor(crossing)
     const lightColor = getLightColor(crossing)
+    const barrierColor = getBarrierColor(crossing)
+    const barrierRotation = getBarrierRotation(crossing)
 
-    const barrierRotation = crossing.barriersDown
-        ? 0
-        : crossing.barriersClosing
-            ? -25
-            : -55
+    const barrier = barrierRotation === null
+        ? ''
+        : `
+<rect
+x="20"
+y="18"
+width="7"
+height="3"
+rx="1.5"
+fill="${barrierColor}"
+transform="rotate(${barrierRotation} 20 18)"
+    />`
 
     const svg = `
-<svg
+    <svg
 xmlns="http://www.w3.org/2000/svg"
 width="32"
 height="32"
@@ -136,21 +175,12 @@ fill="${stateColor}"
 cy="12"
 r="3"
 fill="${lightColor}"
-/>
-
-<rect
-    x="20"
-y="18"
-width="7"
-height="3"
-rx="1.5"
-fill="${barrierColor}"
-transform="rotate(${barrierRotation} 20 18)"
     />
-    </svg>
-        `
 
-    return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`
+    ${barrier}
+</svg>`
+
+return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`
 }
 
 export function useMap(mapElement: Ref<HTMLElement | null>) {
@@ -161,7 +191,6 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
     let trainSource: VectorSource | null = null
     let crossingSource: VectorSource | null = null
     let resizeObserver: ResizeObserver | null = null
-
     let tooltipElement: HTMLElement | null = null
     let tooltipOverlay: Overlay | null = null
 
@@ -194,7 +223,7 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
         return 1
     }
 
-    function createTrainStyle(train: TrainViewModel) {
+    function createTrainStyle(train: TrainViewModel): Style {
         return new Style({
             renderer: (pixelCoordinates, state) => {
                 const context = state.context as CanvasRenderingContext2D
@@ -208,11 +237,12 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
                     context.drawImage(trainImage, x, y, size, size)
                 }
 
+                const text = `${train.carrier} ${train.number}`
+
                 context.font = '600 11px Arial'
                 context.textAlign = 'center'
                 context.textBaseline = 'top'
 
-                const text = `${train.carrier} ${train.number}`
                 const textWidth = context.measureText(text).width
 
                 context.fillStyle = 'rgba(255, 255, 255, 0.85)'
@@ -224,16 +254,12 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
                 )
 
                 context.fillStyle = '#222'
-                context.fillText(
-                    text,
-                    pixel[0],
-                    pixel[1] + 21
-                )
+                context.fillText(text, pixel[0], pixel[1] + 21)
             }
         })
     }
 
-    function createCrossingStyle(crossing: CrossingStatusViewModel) {
+    function createCrossingStyle(crossing: CrossingStatusViewModel): Style {
         return new Style({
             image: new Icon({
                 src: createCrossingSvg(crossing),
@@ -290,9 +316,7 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
         }
 
         const trains = trainStore.filteredTrains
-        const currentIds = new Set(
-            trains.map(train => train.id)
-        )
+        const currentIds = new Set(trains.map(train => train.id))
 
         for (const [id, feature] of trainFeatures) {
             if (!currentIds.has(id)) {
@@ -333,29 +357,18 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
             feature.set('type', 'crossing')
             feature.set('crossing', crossing)
             feature.set('status', crossing)
-            feature.setStyle(
-                createCrossingStyle(crossing)
-            )
+            feature.setStyle(createCrossingStyle(crossing))
 
-            crossingFeatures.set(
-                crossing.id,
-                feature
-            )
-
+            crossingFeatures.set(crossing.id, feature)
             crossingSource.addFeature(feature)
 
             return
         }
 
-        feature.getGeometry()?.setCoordinates(
-            coordinates
-        )
-
+        feature.getGeometry()?.setCoordinates(coordinates)
         feature.set('crossing', crossing)
         feature.set('status', crossing)
-        feature.setStyle(
-            createCrossingStyle(crossing)
-        )
+        feature.setStyle(createCrossingStyle(crossing))
     }
 
     function syncCrossings() {
@@ -364,9 +377,7 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
         }
 
         const crossings = crossingStore.crossingsStatus
-        const currentIds = new Set(
-            crossings.map(crossing => crossing.id)
-        )
+        const currentIds = new Set(crossings.map(crossing => crossing.id))
 
         for (const [id, feature] of crossingFeatures) {
             if (!currentIds.has(id)) {
@@ -385,13 +396,9 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
             await crossingStore.fetchCrossingsStatus()
             syncCrossings()
         } catch (error) {
-            console.error(
-                'Nie udało się pobrać przejazdów:',
-                error
-            )
+            console.error('Nie udało się pobrać przejazdów:', error)
         }
     }
-
 
     function updateCrossingIconScales() {
         const scale = getCrossingScale()
@@ -429,45 +436,25 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
         crossing: CrossingStatusViewModel,
         coordinate: number[]
     ) {
-        if (
-            !tooltipElement ||
-            !tooltipOverlay
-        ) {
+        if (!tooltipElement || !tooltipOverlay) {
             return
         }
 
-        const stateLabel = getStateLabel(
-            crossing.state
-        )
+        const stateLabel = getStateLabel(crossing.state)
+        const barrierLabel = getBarrierLabel(crossing)
+        const lightLabel = getLightLabel(crossing)
+        const stateColor = getStateColor(crossing.state)
 
-        const barrierLabel =
-            getBarrierLabel(crossing)
-
-        const lightLabel =
-            getLightLabel(crossing)
-
-        const stateColor =
-            getStateColor(crossing.state)
-
-        const eta = Number.isFinite(
-            crossing.etaSeconds
-        )
-            ? `${Math.max(
-    0,
-    Math.round(crossing.etaSeconds)
-)} s`
+        const eta = Number.isFinite(crossing.etaSeconds)
+            ? `${Math.max(0, Math.round(crossing.etaSeconds))} s`
             : '-'
 
-        const distance = Number.isFinite(
-            crossing.distanceMeters
-        )
-            ? `${Math.round(
-    crossing.distanceMeters
-)} m`
+        const distance = Number.isFinite(crossing.distanceMeters)
+            ? `${Math.round(crossing.distanceMeters)} m`
             : '-'
 
         const train = crossing.trainNumber
-            ? `${crossing.carrier} ${crossing.trainNumber}`
+            ? `${crossing.carrier ?? ''} ${crossing.trainNumber}`.trim()
             : 'Brak'
 
         tooltipElement.innerHTML = `
@@ -476,44 +463,44 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
 </div>
 
 <div class="map-tooltip-state">
-<span
-    class="map-tooltip-state-dot"
-style="
-background: ${stateColor};
-box-shadow: 0 0 0 4px ${stateColor}33;
-"
-></span>
+    <span
+        class="map-tooltip-state-dot"
+        style="
+            background: ${stateColor};
+            box-shadow: 0 0 0 4px ${stateColor}33;
+        "
+    ></span>
 
-<strong style="color: ${stateColor}">
-    ${stateLabel}
-</strong>
+    <strong style="color: ${stateColor}">
+        ${stateLabel}
+    </strong>
 </div>
 
 <div class="map-tooltip-row">
     <span>🚦 Światła</span>
-<strong>${lightLabel}</strong>
+    <strong>${lightLabel}</strong>
 </div>
 
 <div class="map-tooltip-row">
     <span>🚧 Zapory</span>
-<strong>${barrierLabel}</strong>
+    <strong>${barrierLabel}</strong>
 </div>
 
 <div class="map-tooltip-row">
     <span>🚆 Pociąg</span>
-<strong>${train}</strong>
+    <strong>${train}</strong>
 </div>
 
 <div class="map-tooltip-row">
     <span>📍 Odległość</span>
-<strong>${distance}</strong>
+    <strong>${distance}</strong>
 </div>
 
 <div class="map-tooltip-row">
     <span>⏱ ETA</span>
-<strong>${eta}</strong>
+    <strong>${eta}</strong>
 </div>
-    `
+`
 
         tooltipOverlay.setPosition(coordinate)
         tooltipElement.style.display = 'block'
@@ -525,37 +512,29 @@ box-shadow: 0 0 0 4px ${stateColor}33;
         }
 
         map.on('click', event => {
-            const feature =
-                map?.forEachFeatureAtPixel(
-                    event.pixel,
-                    feature => feature
-                )
+            const feature = map?.forEachFeatureAtPixel(
+                event.pixel,
+                feature => feature
+            )
 
             if (!feature) {
                 trainStore.clearSelection()
                 return
             }
 
-            const train =
-                feature.get(
-                    'train'
-                ) as TrainViewModel | undefined
+            const train = feature.get('train') as TrainViewModel | undefined
 
             if (train) {
                 trainStore.selectTrain(train)
                 return
             }
 
-            const crossing =
-                feature.get(
-                    'crossing'
-                ) as CrossingStatusViewModel | undefined
+            const crossing = feature.get(
+                'crossing'
+            ) as CrossingStatusViewModel | undefined
 
             if (crossing) {
-                console.log(
-                    'Kliknięto przejazd:',
-                    crossing
-                )
+                showCrossingTooltip(crossing, event.coordinate)
             }
         })
 
@@ -564,28 +543,25 @@ box-shadow: 0 0 0 4px ${stateColor}33;
                 return
             }
 
-            const target =
-                map.getTargetElement()
+            const target = map.getTargetElement()
 
             if (!target) {
                 return
             }
 
-            const feature =
-                map.forEachFeatureAtPixel(
-                    event.pixel,
-                    feature => feature
-                )
+            const feature = map.forEachFeatureAtPixel(
+                event.pixel,
+                feature => feature
+            )
 
             if (!feature) {
                 hideTooltip()
                 return
             }
 
-            const crossing =
-                feature.get(
-                    'crossing'
-                ) as CrossingStatusViewModel | undefined
+            const crossing = feature.get(
+                'crossing'
+            ) as CrossingStatusViewModel | undefined
 
             if (!crossing) {
                 hideTooltip()
@@ -594,17 +570,13 @@ box-shadow: 0 0 0 4px ${stateColor}33;
 
             target.style.cursor = 'pointer'
 
-            showCrossingTooltip(
-                crossing,
-                event.coordinate
-            )
+            showCrossingTooltip(crossing, event.coordinate)
         })
 
-        map.getTargetElement()
-            .addEventListener(
-                'mouseleave',
-                hideTooltip
-            )
+        map.getTargetElement().addEventListener(
+            'mouseleave',
+            hideTooltip
+        )
     }
 
     function createMap() {
@@ -615,15 +587,13 @@ box-shadow: 0 0 0 4px ${stateColor}33;
         trainSource = new VectorSource()
         crossingSource = new VectorSource()
 
-        const crossingLayer =
-            new VectorLayer({
-                source: crossingSource
-            })
+        const crossingLayer = new VectorLayer({
+            source: crossingSource
+        })
 
-        const trainLayer =
-            new VectorLayer({
-                source: trainSource
-            })
+        const trainLayer = new VectorLayer({
+            source: trainSource
+        })
 
         map = new OLMap({
             target: mapElement.value,
@@ -635,48 +605,33 @@ box-shadow: 0 0 0 4px ${stateColor}33;
                 trainLayer
             ],
             view: new View({
-                center: fromLonLat([
-                    19.4,
-                    52.1
-                ]),
+                center: fromLonLat([19.4, 52.1]),
                 zoom: 6,
                 minZoom: 5,
                 maxZoom: 18
             })
         })
 
-        tooltipElement =
-            document.getElementById(
-                'tooltip'
-            )
+        tooltipElement = document.getElementById('tooltip')
 
         if (tooltipElement) {
-            tooltipElement.style.display =
-                'none'
+            tooltipElement.style.display = 'none'
 
-            tooltipOverlay =
-                new Overlay({
-                    element:
-                        tooltipElement,
-                    positioning:
-                        'bottom-center',
-                    stopEvent: false,
-                    offset: [0, -15]
-                })
-
-            map.addOverlay(
-                tooltipOverlay
-            )
-        }
-
-        resizeObserver =
-            new ResizeObserver(() => {
-                map?.updateSize()
+            tooltipOverlay = new Overlay({
+                element: tooltipElement,
+                positioning: 'bottom-center',
+                stopEvent: false,
+                offset: [0, -15]
             })
 
-        resizeObserver.observe(
-            mapElement.value
-        )
+            map.addOverlay(tooltipOverlay)
+        }
+
+        resizeObserver = new ResizeObserver(() => {
+            map?.updateSize()
+        })
+
+        resizeObserver.observe(mapElement.value)
 
         setupMapInteractions()
         syncTrains()
@@ -693,22 +648,17 @@ box-shadow: 0 0 0 4px ${stateColor}33;
     }
 
     function centerOnSelectedTrain() {
-        if (
-            !map ||
-            trainStore.selectedTrainId === null
-        ) {
+        if (!map || trainStore.selectedTrainId === null) {
             return
         }
 
-        const feature =
-            trainFeatures.get(
-                trainStore.selectedTrainId
-            )
+        const feature = trainFeatures.get(
+            trainStore.selectedTrainId
+        )
 
-        const coordinates =
-            feature
-                ?.getGeometry()
-                ?.getCoordinates()
+        const coordinates = feature
+            ?.getGeometry()
+            ?.getCoordinates()
 
         if (!coordinates) {
             return
@@ -730,11 +680,11 @@ box-shadow: 0 0 0 4px ${stateColor}33;
             return
         }
 
-        const target =
-            map.getTargetElement()
+        const target = map.getTargetElement()
 
         if (target) {
             target.style.cursor = ''
+            target.removeEventListener('mouseleave', hideTooltip)
         }
 
         map.setTarget(undefined)
@@ -754,9 +704,7 @@ box-shadow: 0 0 0 4px ${stateColor}33;
 
     watch(
         () => trainStore.filteredTrains,
-        () => {
-            syncTrains()
-        },
+        syncTrains,
         {
             deep: true
         }
@@ -764,16 +712,12 @@ box-shadow: 0 0 0 4px ${stateColor}33;
 
     watch(
         () => trainStore.selectedTrainId,
-        () => {
-            centerOnSelectedTrain()
-        }
+        centerOnSelectedTrain
     )
 
     watch(
         () => crossingStore.crossingsStatus,
-        () => {
-            syncCrossings()
-        },
+        syncCrossings,
         {
             deep: true
         }

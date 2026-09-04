@@ -3,12 +3,11 @@ export interface CrossingStatusViewModel {
     name: string
     category: string
     state: CrossingState
-    lightsActive: boolean
-    barriersClosing: boolean
-    barriersDown: boolean
-    trainId: number
-    trainNumber: string
-    carrier: string
+    barriers: BarrierState
+    lights: LightState
+    trainId?: number
+    trainNumber?: string
+    carrier?: string
     distanceMeters: number
     etaSeconds: number
     latitude: number
@@ -21,3 +20,21 @@ export enum CrossingState
     Caution,
     Stop
 }
+
+export enum LightState
+{
+    None,
+    Off,
+    FlashingRed,
+    Unknown
+}
+
+export enum BarrierState
+{
+    None,
+    Open,
+    Closing,
+    Closed,
+    Unknown
+}
+

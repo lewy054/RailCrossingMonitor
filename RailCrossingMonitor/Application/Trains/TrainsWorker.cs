@@ -71,7 +71,6 @@ public sealed class TrainsWorker(
 
         var connectionParameters = await GetConnectionParametersAsync(cancellationToken);
         var negotiate = await NegotiateAsync(cancellationToken);
-
         await using var connection = CreateConnection(negotiate);
         RegisterHandlers(connection, connectionParameters);
         logger.LogInformation("Connecting to Portal Pasażera SignalR...");
@@ -108,6 +107,12 @@ public sealed class TrainsWorker(
         var httpClient = httpClientFactory.CreateClient();
 
         using var request = new HttpRequestMessage(HttpMethod.Post, options.Value.HubUrl);
+
+        request.Headers.Referrer =
+           new Uri("https://mapa.portalpasazera.pl/");
+
+        request.Headers.TryAddWithoutValidation("Origin", "https://mapa.portalpasazera.pl");
+
         request.Content = JsonContent.Create(new { });
         using var response = await httpClient.SendAsync(request, cancellationToken);
         var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -145,13 +150,23 @@ public sealed class TrainsWorker(
         return negotiate;
     }
 
-    private static HubConnection CreateConnection(NegotiateResponse negotiate)
+    private static HubConnection CreateConnection(
+        NegotiateResponse negotiate)
     {
-        return new HubConnectionBuilder().WithUrl(negotiate.Url,
+        return new HubConnectionBuilder()
+            .WithUrl(
+                negotiate.Url!,
                 httpOptions =>
                 {
-                    httpOptions.AccessTokenProvider = () => Task.FromResult(negotiate.AccessToken);
+                    httpOptions.AccessTokenProvider =
+                        () => Task.FromResult(
+                            negotiate.AccessToken);
                 })
+            .ConfigureLogging(logging =>
+            {
+                logging.SetMinimumLevel(LogLevel.Trace);
+                logging.AddConsole();
+            })
             .WithAutomaticReconnect([
                 TimeSpan.Zero,
                 TimeSpan.FromSeconds(2),
@@ -166,54 +181,52 @@ public sealed class TrainsWorker(
         HubConnection connection,
         ConnectionParameters parameters)
     {
-        // connection.On<string, List<PortalTrainDto>>(
-        //     "TrainStatus",
-        //     ProcessTrainStatus);
-        connection.On<JsonElement>("TrainStatus", payload =>
-        {
-            logger.LogInformation(
-                "!!! RAW TrainStatus RECEIVED !!! Kind={Kind}, Payload={Payload}",
-                payload.ValueKind,
-                payload.ToString());
-
-            try
-            {
-                if (payload.ValueKind != JsonValueKind.Array)
-                {
-                    logger.LogWarning("TrainStatus payload is not an array. Kind={Kind}", payload.ValueKind);
-                    return;
-                }
-
-                logger.LogInformation("TrainStatus array length: {Length}", payload.GetArrayLength());
-
-                if (payload.GetArrayLength() < 2)
-                {
-                    logger.LogWarning("TrainStatus payload has less than 2 elements.");
-                    return;
-                }
-
-                var source = payload[0].GetString() ?? string.Empty;
-
-                var trains = payload[1].Deserialize<List<PortalTrainDto>>(
-                    new JsonSerializerOptions
-                    {
-                        PropertyNameCaseInsensitive = true
-                    });
-
-                logger.LogInformation("TrainStatus parsed. Source={Source}, Count={Count}", source, trains?.Count ?? 0);
-                if (trains is null)
-                {
-                    logger.LogWarning("Unable to deserialize trains.");
-                    return;
-                }
-
-                ProcessTrainStatus(source, trains);
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error processing raw TrainStatus payload.");
-            }
-        });
+        connection.On<string, List<PortalTrainDto>>("TrainStatus", ProcessTrainStatus);
+        // connection.On<JsonElement>("TrainStatus", payload =>
+        // {
+        //     logger.LogInformation(
+        //         "!!! RAW TrainStatus RECEIVED !!! Kind={Kind}, Payload={Payload}",
+        //         payload.ValueKind,
+        //         payload.ToString());
+        //
+        //     try
+        //     {
+        //         if (payload.ValueKind != JsonValueKind.Array)
+        //         {
+        //             logger.LogWarning("TrainStatus payload is not an array. Kind={Kind}", payload.ValueKind);
+        //             return;
+        //         }
+        //
+        //         logger.LogInformation("TrainStatus array length: {Length}", payload.GetArrayLength());
+        //
+        //         if (payload.GetArrayLength() < 2)
+        //         {
+        //             logger.LogWarning("TrainStatus payload has less than 2 elements.");
+        //             return;
+        //         }
+        //
+        //         var source = payload[0].GetString() ?? string.Empty;
+        //
+        //         var trains = payload[1].Deserialize<List<PortalTrainDto>>(
+        //             new JsonSerializerOptions
+        //             {
+        //                 PropertyNameCaseInsensitive = true
+        //             });
+        //
+        //         logger.LogInformation("TrainStatus parsed. Source={Source}, Count={Count}", source, trains?.Count ?? 0);
+        //         if (trains is null)
+        //         {
+        //             logger.LogWarning("Unable to deserialize trains.");
+        //             return;
+        //         }
+        //
+        //         ProcessTrainStatus(source, trains);
+        //     }
+        //     catch (Exception ex)
+        //     {
+        //         logger.LogError(ex, "Error processing raw TrainStatus payload.");
+        //     }
+        // });
 
         connection.Reconnecting += error =>
         {

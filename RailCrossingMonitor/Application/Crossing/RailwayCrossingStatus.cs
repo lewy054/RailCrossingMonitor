@@ -34,6 +34,9 @@ public sealed class RailwayCrossingStatus
     public BarrierState Barriers { get; init; }
     public LightState Lights { get; init; }
 
+    public long? TrainId { get; init; }
+    public string? TrainNumber { get; init; }
+    public string? Carrier { get; init; }
     public double? DistanceMeters { get; init; }
     public double? EtaSeconds { get; init; }
 

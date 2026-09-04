@@ -67,8 +67,7 @@ public class RailwayCrossingService(
             $"Załadowano {crossings.Count} przejazdów kolejowych.");
     }
     
-    private static RailwayCrossingStatus CreateSafeStatus(
-        RailwayCrossing crossing)
+    private static RailwayCrossingStatus CreateSafeStatus(RailwayCrossing crossing)
     {
         var category = crossing.Category.Trim().ToUpperInvariant();
 
@@ -133,6 +132,10 @@ public class RailwayCrossingService(
             State = protection.State,
             Barriers = protection.Barriers,
             Lights = protection.Lights,
+
+            TrainId = train.Train.Id,
+            TrainNumber = train.Train.Number,
+            Carrier = train.Train.Carrier,
 
             DistanceMeters = train.DistanceMeters,
             EtaSeconds = train.EtaSeconds,

@@ -31,7 +31,7 @@ export const useTrainStore = defineStore('trains', () => {
         filteredTrains.value = trains.value.filter(train =>
             `${train.carrier} ${train.number}`
                 .toLowerCase()
-                .includes(query)
+                .includes(query.toLowerCase())
         )
     }
 
