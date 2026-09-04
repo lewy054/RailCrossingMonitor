@@ -3,18 +3,10 @@ using RailCrossingMonitor.Application.Crossing;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddCors(options =>
-{
-    options.AddPolicy("frontend", policy =>
-    {
-        policy
-            .WithOrigins("http://localhost:5173")
-            .AllowAnyHeader()
-            .AllowAnyMethod()
-            .AllowCredentials();
-    });
-});
-
+builder.Services.Configure<RailCrossingServiceOptions>(
+    builder.Configuration.GetSection(RailCrossingServiceOptions.SectionName));
+builder.Services.Configure<TrainsOptions>(
+    builder.Configuration.GetSection(TrainsOptions.SectionName));
 builder.Services.AddHttpClient();
 builder.Services.AddHttpClient<RailwayCrossingService>();
 builder.Services.AddSignalR();
@@ -51,7 +43,6 @@ app.MapGet("/api/crossings", async (
     CancellationToken cancellationToken) =>
 {
     var crossings = await service.GetCrossingsAsync(cancellationToken);
-
     return Results.Ok(crossings);
 });
 

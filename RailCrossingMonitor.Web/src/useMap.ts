@@ -15,97 +15,130 @@ import OSM from 'ol/source/OSM'
 import VectorSource from 'ol/source/Vector'
 import { fromLonLat } from 'ol/proj'
 
-import {
-    Style,
-    Circle,
-    Fill,
-    Stroke,
-    Text,
-    RegularShape
-} from 'ol/style'
+import {Circle, Fill, Stroke, Style, Text} from 'ol/style'
 
 import { useTrainStore } from '@/stores/trains-store'
 import { useCrossingStore } from '@/stores/crossing-store'
 
 import type { TrainViewModel } from '@/train-viewmodel'
-import type { Crossing } from '@/crossing-viewmodel'
+import type { CrossingViewModel} from '@/crossing-viewmodel'
+import { Overlay } from "ol"
+
+const trainIcon = '/train.svg'
+const crossingIcon = '/crossing.svg'
+
+function createSvgImage(src: string): HTMLImageElement {
+    const image = new Image()
+    image.src = src
+    return image
+}
+
+const trainImage = createSvgImage(trainIcon)
+const crossingImage = createSvgImage(crossingIcon)
+const tooltipElement = document.getElementById('tooltip');
+const tooltipOverlay = new Overlay({
+    element: tooltipElement,
+    positioning: 'bottom-center',
+    stopEvent: false,
+});
 
 export function useMap(mapElement: Ref<HTMLElement | null>) {
     const trainStore = useTrainStore()
     const crossingStore = useCrossingStore()
 
     let map: OLMap | null = null
-
     let trainSource: VectorSource | null = null
     let crossingSource: VectorSource | null = null
+    let resizeObserver: ResizeObserver | null = null
 
     const trainFeatures = new Map<number, Feature<Point>>()
     const crossingFeatures = new Map<string, Feature<Point>>()
 
-    /*
-     * --------------------------------------------------------------------------
-     * Styles
-     * --------------------------------------------------------------------------
-     */
-
     function createTrainStyle(train: TrainViewModel) {
         return new Style({
-            image: new RegularShape({
-                points: 3,
-                radius: 10,
-                rotation: train.heading,
+            renderer: (pixelCoordinates, state) => {
+                const context = state.context as CanvasRenderingContext2D
+                const pixel = pixelCoordinates as number[]
+
+                const size = 32
+                const x = pixel[0] - size / 2
+                const y = pixel[1] - size / 2
+
+                if (trainImage.complete) {
+                    context.drawImage(
+                        trainImage,
+                        x,
+                        y,
+                        size,
+                        size
+                    )
+                }
+
+                context.font = '600 11px Arial'
+                context.textAlign = 'center'
+                context.textBaseline = 'top'
+
+                const text = `${train.carrier} ${train.number}`
+                const textWidth = context.measureText(text).width
+
+                context.fillStyle = 'rgba(255, 255, 255, 0.4)'
+                context.fillRect(pixel[0] - textWidth / 2 - 5, pixel[1] + 18, textWidth + 10, 17)
+
+                context.fillStyle = '#222'
+                context.fillText(text, pixel[0], pixel[1] + 21)
+            }
+        })
+    }
+
+    function createCrossingStyle() {
+        return new Style({
+            image: new Circle({
+                radius: 5,
                 fill: new Fill({
-                    color: '#1976d2'
+                    color: '#ff0000'
                 }),
                 stroke: new Stroke({
                     color: '#ffffff',
                     width: 2
                 })
-            }),
-
-            text: new Text({
-                text: `${train.carrier} ${train.number}`,
-                offsetY: 22,
-                font: '600 11px Arial',
-                fill: new Fill({
-                    color: '#222'
-                }),
-                backgroundFill: new Fill({
-                    color: 'rgba(255, 255, 255, 0.9)'
-                }),
-                padding: [3, 5, 3, 5]
             })
         })
+        // return new Style({
+        //     renderer: (pixelCoordinates, state) => {
+        //         const context = state.context as CanvasRenderingContext2D
+        //         const pixel = pixelCoordinates as number[]
+        //
+        //         const size = 20
+        //         const x = pixel[0] - size / 2
+        //         const y = pixel[1] - size / 2
+        //
+        //         if (crossingImage.complete) {
+        //             context.drawImage(crossingImage, x, y, size, size
+        //             )
+        //         }
+        //
+        //         context.font = '600 8px Arial'
+        //         context.textAlign = 'center'
+        //         context.textBaseline = 'top'
+        //
+        //         const text = `${crossing.category} ${crossing.manager}`
+        //         const textWidth = context.measureText(text).width
+        //
+        //         context.fillStyle = 'rgba(255, 255, 255, 0.3)'
+        //         context.fillRect(pixel[0] - textWidth / 2 - 5, pixel[1] + 18, textWidth + 10, 17)
+        //
+        //         context.fillStyle = '#222'
+        //         context.fillText(text, pixel[0], pixel[1] + 21)
+        //     }
+        // })
     }
-
-    const crossingStyle = new Style({
-        image: new Circle({
-            radius: 5,
-            fill: new Fill({
-                color: '#ff9800'
-            }),
-            stroke: new Stroke({
-                color: '#ffffff',
-                width: 2
-            })
-        })
-    })
-
-    /*
-     * --------------------------------------------------------------------------
-     * Trains
-     * --------------------------------------------------------------------------
-     */
 
     function updateTrain(train: TrainViewModel) {
         if (!trainSource) {
             return
         }
 
-        if (
-            !Number.isFinite(train.latitude) ||
-            !Number.isFinite(train.longitude)
-        ) {
+        if (!Number.isFinite(train.latitude) || !Number.isFinite(train.longitude)) {
             return
         }
 
@@ -131,10 +164,7 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
             return
         }
 
-        feature
-            .getGeometry()
-            ?.setCoordinates(coordinates)
-
+        feature.getGeometry()?.setCoordinates(coordinates)
         feature.set('train', train)
         feature.setStyle(createTrainStyle(train))
     }
@@ -144,14 +174,9 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
             return
         }
 
-        const currentIds = new Set(
-            trainStore.filteredTrains.map(train => train.id)
-        )
+        const trains = trainStore.filteredTrains
+        const currentIds = new Set(trains.map(train => train.id))
 
-        /*
-         * Remove trains which are no longer present
-         * in filteredTrains.
-         */
         for (const [id, feature] of trainFeatures) {
             if (!currentIds.has(id)) {
                 trainSource.removeFeature(feature)
@@ -159,29 +184,17 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
             }
         }
 
-        /*
-         * Add / update current trains.
-         */
-        for (const train of trainStore.filteredTrains) {
+        for (const train of trains) {
             updateTrain(train)
         }
     }
 
-    /*
-     * --------------------------------------------------------------------------
-     * Crossings
-     * --------------------------------------------------------------------------
-     */
-
-    function updateCrossing(crossing: Crossing) {
+    function updateCrossing(crossing: CrossingViewModel) {
         if (!crossingSource) {
             return
         }
 
-        if (
-            !Number.isFinite(crossing.latitude) ||
-            !Number.isFinite(crossing.longitude)
-        ) {
+        if (!Number.isFinite(crossing.latitude) || !Number.isFinite(crossing.longitude)) {
             return
         }
 
@@ -199,7 +212,7 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
 
             feature.set('type', 'crossing')
             feature.set('crossing', crossing)
-            feature.setStyle(crossingStyle)
+            feature.setStyle(createCrossingStyle())
 
             crossingFeatures.set(crossing.id, feature)
             crossingSource.addFeature(feature)
@@ -207,10 +220,7 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
             return
         }
 
-        feature
-            .getGeometry()
-            ?.setCoordinates(coordinates)
-
+        feature.getGeometry()?.setCoordinates(coordinates)
         feature.set('crossing', crossing)
     }
 
@@ -219,14 +229,9 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
             return
         }
 
-        const currentIds = new Set(
-            crossingStore.crossings.map(crossing => crossing.id)
-        )
+        const crossings = crossingStore.crossings
+        const currentIds = new Set(crossings.map(crossing => crossing.id))
 
-        /*
-         * Remove crossings which no longer exist
-         * in the store.
-         */
         for (const [id, feature] of crossingFeatures) {
             if (!currentIds.has(id)) {
                 crossingSource.removeFeature(feature)
@@ -234,10 +239,7 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
             }
         }
 
-        /*
-         * Add / update crossings.
-         */
-        for (const crossing of crossingStore.crossings) {
+        for (const crossing of crossings) {
             updateCrossing(crossing)
         }
     }
@@ -245,21 +247,11 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
     async function loadCrossings() {
         try {
             await crossingStore.fetchCrossings()
-
             syncCrossings()
         } catch (error) {
-            console.error(
-                'Nie udało się pobrać przejazdów:',
-                error
-            )
+            console.error('Nie udało się pobrać przejazdów:', error)
         }
     }
-
-    /*
-     * --------------------------------------------------------------------------
-     * Map interactions
-     * --------------------------------------------------------------------------
-     */
 
     function setupMapInteractions() {
         if (!map) {
@@ -277,33 +269,17 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
                 return
             }
 
-            /*
-             * Train clicked.
-             */
-            const train = feature.get(
-                'train'
-            ) as TrainViewModel | undefined
+            const train = feature.get('train') as TrainViewModel | undefined
 
             if (train) {
                 trainStore.selectTrain(train)
                 return
             }
 
-            /*
-             * Crossing clicked.
-             *
-             * Na razie tylko logujemy dane.
-             * Później możemy tutaj podpiąć popup / drawer.
-             */
-            const crossing = feature.get(
-                'crossing'
-            ) as Crossing | undefined
+            const crossing = feature.get('crossing') as CrossingViewModel | undefined
 
             if (crossing) {
-                console.log(
-                    'Kliknięto przejazd:',
-                    crossing
-                )
+                console.log('Kliknięto przejazd:', crossing)
             }
         })
 
@@ -317,20 +293,36 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
             if (!target) {
                 return
             }
+            
+            const feature = map.forEachFeatureAtPixel(event.pixel, function (feature) {
+                return feature;
+            });
+            if (!feature) {
+                return
+            }
 
-            target.style.cursor = map.hasFeatureAtPixel(
-                event.pixel
-            )
-                ? 'pointer'
-                : ''
+            const train = feature.get('train') as TrainViewModel | undefined
+
+            if (train) {
+                console.log('najechano na pociag:', train)
+                return
+            }
+
+            const crossing = feature.get('crossing') as CrossingViewModel | undefined
+
+            if (crossing) {
+                tooltipElement.innerHTML = `${crossing.category} ${crossing.manager}`;
+                tooltipOverlay.setPosition(evt.coordinate);
+                tooltipElement.style.display = 'block';
+
+                // Zmiana kursora na wskaźnik nad obiektem
+                map.getTargetElement().style.cursor = 'pointer';
+            }
+
+            tooltipElement.style.display = 'none';
+            map.getTargetElement().style.cursor = '';
         })
     }
-
-    /*
-     * --------------------------------------------------------------------------
-     * Map creation
-     * --------------------------------------------------------------------------
-     */
 
     function createMap() {
         if (!mapElement.value) {
@@ -340,82 +332,58 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
         trainSource = new VectorSource()
         crossingSource = new VectorSource()
 
-        const trainLayer = new VectorLayer({
-            source: trainSource
-        })
-
         const crossingLayer = new VectorLayer({
             source: crossingSource
         })
 
+        const trainLayer = new VectorLayer({
+            source: trainSource
+        })
+
         map = new OLMap({
             target: mapElement.value,
-
             layers: [
                 new TileLayer({
                     source: new OSM()
                 }),
-
-                /*
-                 * Crossings are below trains,
-                 * so trains remain visually more important.
-                 */
                 crossingLayer,
-
                 trainLayer
             ],
-
             view: new View({
                 center: fromLonLat([
                     19.4,
                     52.1
                 ]),
-
                 zoom: 6,
-
                 minZoom: 5,
                 maxZoom: 18
             })
         })
 
+        map.addOverlay(tooltipOverlay);
+
+        resizeObserver = new ResizeObserver(() => {
+            map?.updateSize()
+        })
+
+        resizeObserver.observe(mapElement.value)
+
         setupMapInteractions()
-
-        /*
-         * Initial synchronization.
-         *
-         * Important:
-         * the train store may already contain trains
-         * before the map is created.
-         */
         syncTrains()
-
-        /*
-         * Load crossings from backend.
-         */
         void loadCrossings()
+
+        requestAnimationFrame(() => {
+            map?.updateSize()
+        })
     }
 
-    /*
-     * --------------------------------------------------------------------------
-     * Map navigation
-     * --------------------------------------------------------------------------
-     */
-
     function centerOnSelectedTrain() {
-        if (
-            !map ||
-            trainStore.selectedTrainId === null
-        ) {
+        if (!map || trainStore.selectedTrainId === null) {
             return
         }
 
-        const feature = trainFeatures.get(
-            trainStore.selectedTrainId
-        )
-
-        const coordinates = feature
-            ?.getGeometry()
-            ?.getCoordinates()
+        const feature = trainFeatures.get(trainStore.selectedTrainId)
+        const coordinates = feature?.getGeometry()?.getCoordinates()
 
         if (!coordinates) {
             return
@@ -427,13 +395,10 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
         })
     }
 
-    /*
-     * --------------------------------------------------------------------------
-     * Cleanup
-     * --------------------------------------------------------------------------
-     */
-
     function destroyMap() {
+        resizeObserver?.disconnect()
+        resizeObserver = null
+
         if (!map) {
             return
         }
@@ -454,15 +419,8 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
 
         trainSource = null
         crossingSource = null
-
         map = null
     }
-
-    /*
-     * --------------------------------------------------------------------------
-     * Watchers
-     * --------------------------------------------------------------------------
-     */
 
     watch(
         () => trainStore.filteredTrains,
@@ -490,12 +448,6 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
             deep: true
         }
     )
-
-    /*
-     * --------------------------------------------------------------------------
-     * Lifecycle
-     * --------------------------------------------------------------------------
-     */
 
     onMounted(createMap)
     onBeforeUnmount(destroyMap)

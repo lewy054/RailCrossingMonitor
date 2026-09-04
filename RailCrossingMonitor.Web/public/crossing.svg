@@ -1,0 +1,45 @@
+<svg
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 64 64"
+>
+    <!-- tory -->
+    <path
+            d="M8 24 H56"
+            stroke="#37474f"
+            stroke-width="6"
+    />
+
+    <path
+            d="M8 40 H56"
+            stroke="#37474f"
+            stroke-width="6"
+    />
+
+    <!-- szlaban -->
+    <path
+            d="M20 32 L51 15"
+            stroke="#f57c00"
+            stroke-width="6"
+            stroke-linecap="round"
+    />
+
+    <!-- słupek -->
+    <rect
+            x="15"
+            y="28"
+            width="8"
+            height="25"
+            rx="2"
+            fill="#455a64"
+    />
+
+    <!-- światło -->
+    <circle
+            cx="19"
+            cy="21"
+            r="7"
+            fill="#fbc02d"
+            stroke="#ffffff"
+            stroke-width="2"
+    />
+</svg>

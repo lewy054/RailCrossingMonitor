@@ -1,30 +1,14 @@
 ﻿using System.Xml.Linq;
+using Microsoft.Extensions.Options;
 
 namespace RailCrossingMonitor.Application.Crossing;
 
-public class RailwayCrossingService
+public class RailwayCrossingService(HttpClient httpClient, IOptions<RailCrossingServiceOptions> options)
 {
-    private readonly HttpClient _httpClient;
-
-    private const string WfsUrl = "https://mapy.geoportal.gov.pl/wss/service/wfs/sdi/Przejazdy";
-
-    public RailwayCrossingService(HttpClient httpClient)
-    {
-        _httpClient = httpClient;
-    }
-
     public async Task<List<RailwayCrossing>> GetCrossingsAsync(CancellationToken cancellationToken)
     {
-        var url =
-            WfsUrl +
-            "?SERVICE=WFS" +
-            "&VERSION=2.0.0" +
-            "&REQUEST=GetFeature" +
-            "&TYPENAMES=ms:PKP_PLK" +
-            "&SRSNAME=EPSG:4326";
-
-        var xml = await _httpClient.GetStringAsync(url, cancellationToken);
-
+        var url = $"{options.Value.Url}?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature&TYPENAMES=ms:PKP_PLK&SRSNAME=EPSG:4326";
+        var xml = await httpClient.GetStringAsync(url, cancellationToken);
         return ParseXml(xml);
     }
 

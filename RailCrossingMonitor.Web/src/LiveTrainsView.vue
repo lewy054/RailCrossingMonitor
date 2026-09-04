@@ -1,8 +1,9 @@
 ﻿<template>
   <div class="live-trains">
-    <main class="train-map">
+    <main class="map-container">
       <Map />
     </main>
+
     <aside class="train-sidebar">
       <TrainList />
     </aside>
@@ -47,6 +48,16 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
+.map-container {
+  flex: 1 1 auto;
+  width: 0;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+
 .train-sidebar {
   width: 340px;
   height: 100%;
@@ -55,12 +66,5 @@ onBeforeUnmount(() => {
   overflow-y: auto;
   overflow-x: hidden;
   border-right: 1px solid rgba(0, 0, 0, 0.12);
-}
-
-.train-map {
-  flex: 1 1 auto;
-  min-width: 0;
-  min-height: 0;
-  height: 100%;
 }
 </style>

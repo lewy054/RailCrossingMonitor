@@ -1,4 +1,4 @@
-﻿export interface Crossing {
+﻿export interface CrossingViewModel {
     id: string
     name: string
     category: string

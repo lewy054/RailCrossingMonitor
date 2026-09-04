@@ -1,9 +1,9 @@
 ﻿import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type {Crossing} from "@/crossing-viewmodel.ts";
+import type {CrossingViewModel} from "@/crossing-viewmodel.ts";
 
 export const useCrossingStore = defineStore('crossing', () => {
-    const crossings = ref<Crossing[]>([])
+    const crossings = ref<CrossingViewModel[]>([])
     const loading = ref(false)
     const error = ref<string | null>(null)
 
