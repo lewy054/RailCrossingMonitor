@@ -1,4 +1,6 @@
-﻿public class RailwayCrossing
+﻿namespace RailCrossingMonitor.Application.Crossing;
+
+public class RailwayCrossing
 {
     public string Id { get; set; } = "";
     public string Name { get; set; } = "";

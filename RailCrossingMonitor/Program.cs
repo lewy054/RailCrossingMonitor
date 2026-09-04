@@ -11,9 +11,10 @@ builder.Services.AddHttpClient();
 builder.Services.AddHttpClient<RailwayCrossingService>();
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<TrainStore>();
+builder.Services.AddSingleton<CrossingStore>();
 
 builder.Services.AddHostedService<TrainsWorker>();
-
+builder.Services.AddHostedService<CrossingWorker>();
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAll", policy =>
@@ -38,11 +39,11 @@ app.MapGet("/api/health", () =>
 });
 
 app.MapGet("/api/trains", (TrainStore store) => Results.Ok((object?)store.GetAll()));
-app.MapGet("/api/crossings", async (
+app.MapGet("/api/crossings/status", async (
     RailwayCrossingService service,
     CancellationToken cancellationToken) =>
 {
-    var crossings = await service.GetCrossingsAsync(cancellationToken);
+    var crossings = await service.GetCrossingStatusesAsync(cancellationToken);
     return Results.Ok(crossings);
 });
 

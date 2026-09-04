@@ -1,4 +1,4 @@
-namespace RailCrossingMonitor.Application;
+namespace RailCrossingMonitor.Application.Crossing;
 
 public class RailCrossingServiceOptions
 {

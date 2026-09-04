@@ -1,4 +1,4 @@
-﻿namespace RailCrossingMonitor.Models;
+﻿namespace RailCrossingMonitor.Model;
 
 public sealed record TrainPosition(
     long Id,
@@ -10,5 +10,7 @@ public sealed record TrainPosition(
     string Number,
     object? Code,
     double Angle,
-    DateTimeOffset ReceivedAtUtc
+    DateTimeOffset ReceivedAtUtc,
+    double? SpeedKmh,
+    double? HeadingDegrees
 );

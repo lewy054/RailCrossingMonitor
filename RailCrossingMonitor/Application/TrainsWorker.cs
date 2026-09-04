@@ -1,6 +1,6 @@
 ﻿using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
-using Microsoft.AspNetCore.SignalR;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.Options;
 using RailCrossingMonitor.Models;
@@ -11,10 +11,29 @@ public sealed class TrainsWorker(
     IHttpClientFactory httpClientFactory,
     TrainStore store,
     ILogger<TrainsWorker> logger,
-    IOptions<TrainsOptions> options) : BackgroundService
+    IOptions<TrainsOptions> options)
+    : BackgroundService
 {
-    protected override async Task ExecuteAsync(
-        CancellationToken stoppingToken)
+    private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(10);
+
+    private const string Language = "PL";
+    private const double Zoom = 7.022935189742923;
+
+    private const double MinLatitude = 48.29702653973435;
+    private const double MinLongitude = 13.44729945766156;
+
+    private const double MaxLatitude = 55.52329783923743;
+    private const double MaxLongitude = 26.55270054233844;
+
+    private const int SelectedTrainNumber = 0;
+    private const bool ForcedRefresh = true;
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         logger.LogInformation("Trains worker started.");
 
@@ -22,7 +41,7 @@ public sealed class TrainsWorker(
         {
             try
             {
-                await ConnectToPortal(stoppingToken);
+                await RunConnectionAsync(stoppingToken);
             }
             catch (OperationCanceledException)
                 when (stoppingToken.IsCancellationRequested)
@@ -31,93 +50,213 @@ public sealed class TrainsWorker(
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Error connecting to Portal Pasażera.");
-                logger.LogInformation("Retrying in 10 seconds...");
-                await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken);
+                logger.LogError(
+                    ex,
+                    "Trains worker failed. Retrying in {RetryDelay}.",
+                    RetryDelay);
+
+                try
+                {
+                    await Task.Delay(RetryDelay, stoppingToken);
+                }
+                catch (OperationCanceledException)
+                    when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
             }
         }
 
-        logger.LogInformation(
-            "TrainsWorker stopped.");
+        logger.LogInformation("Trains worker stopped.");
     }
 
-    private async Task ConnectToPortal(CancellationToken cancellationToken)
+    private async Task RunConnectionAsync(CancellationToken cancellationToken)
+    {
+        logger.LogInformation("Starting Portal Pasażera connection cycle.");
+
+        // Pobieramy parametry przed uruchomieniem SignalR.
+        var connectionParameters =
+            await GetConnectionParametersAsync(cancellationToken);
+        var negotiate = await NegotiateAsync(cancellationToken);
+
+        await using var connection = CreateConnection(negotiate);
+
+        RegisterHandlers(connection, connectionParameters);
+
+        logger.LogInformation("Connecting to Portal Pasażera SignalR...");
+
+        await connection.StartAsync(cancellationToken);
+
+        logger.LogInformation(
+            "Portal Pasażera SignalR connected. ConnectionId={ConnectionId}",
+            connection.ConnectionId);
+
+        // Pierwsza rejestracja parametrów.
+        await RegisterParametersAsync(
+            connection,
+            connectionParameters,
+            cancellationToken);
+
+        logger.LogInformation("Portal Pasażera registration completed.");
+
+        try
+        {
+            // Czekamy, dopóki połączenie działa / worker nie zostanie zatrzymany.
+            await Task.Delay(
+                Timeout.InfiniteTimeSpan,
+                cancellationToken);
+        }
+        finally
+        {
+            logger.LogInformation("Stopping Portal Pasażera SignalR connection.");
+
+            try
+            {
+                await connection.StopAsync(CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                logger.LogDebug(
+                    ex,
+                    "Error while stopping Portal Pasażera SignalR connection.");
+            }
+        }
+    }
+
+    private async Task<NegotiateResponse> NegotiateAsync(
+        CancellationToken cancellationToken)
     {
         logger.LogInformation("Negotiating Portal Pasażera SignalR connection...");
-        var http = httpClientFactory.CreateClient();
-        using var request = new HttpRequestMessage(HttpMethod.Post, options.Value.HubUrl);
-        request.Content = JsonContent.Create(new { });
-        using var response = await http.SendAsync(request, cancellationToken);
-        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+
+        var httpClient = httpClientFactory.CreateClient();
+
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            options.Value.HubUrl)
+        {
+            Content = JsonContent.Create(new { })
+        };
+
+        using var response =
+            await httpClient.SendAsync(request, cancellationToken);
+
+        var responseBody =
+            await response.Content.ReadAsStringAsync(cancellationToken);
 
         if (!response.IsSuccessStatusCode)
         {
             throw new HttpRequestException(
-                $"Negotiate failed: {(int)response.StatusCode} " +
-                $"{response.ReasonPhrase}. " +
-                $"Response: {responseBody}");
+                $"SignalR negotiate failed. " +
+                $"Status={(int)response.StatusCode} " +
+                $"({response.ReasonPhrase}). " +
+                $"Response={responseBody}");
         }
 
-        var negotiate = JsonSerializer.Deserialize<NegotiateResponse>(responseBody,
-            new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            });
+        var negotiate =
+            JsonSerializer.Deserialize<NegotiateResponse>(
+                responseBody,
+                JsonOptions);
 
         if (negotiate is null)
         {
             throw new InvalidOperationException(
-                "Empty negotiate response.");
+                "SignalR negotiate returned an empty response.");
         }
 
-        if (string.IsNullOrWhiteSpace(negotiate.url))
+        if (string.IsNullOrWhiteSpace(negotiate.Url))
         {
             throw new InvalidOperationException(
-                "Negotiate response does not contain 'url'.");
+                "SignalR negotiate response does not contain 'url'.");
         }
 
-        if (string.IsNullOrWhiteSpace(negotiate.accessToken))
+        if (string.IsNullOrWhiteSpace(negotiate.AccessToken))
         {
             throw new InvalidOperationException(
-                "Negotiate response does not contain 'accessToken'.");
+                "SignalR negotiate response does not contain 'accessToken'.");
         }
 
-        logger.LogInformation("Negotiate successful.");
-        logger.LogDebug("SignalR URL: {Url}", negotiate.url);
-        var connection = new HubConnectionBuilder().WithUrl(negotiate.url,
+        logger.LogDebug(
+            "SignalR negotiate successful. Url={Url}",
+            negotiate.Url);
+
+        return negotiate;
+    }
+
+    private HubConnection CreateConnection(
+        NegotiateResponse negotiate)
+    {
+        return new HubConnectionBuilder()
+            .WithUrl(
+                negotiate.Url,
                 httpOptions =>
                 {
-                    httpOptions.AccessTokenProvider = () => Task.FromResult<string?>(negotiate.accessToken);
+                    httpOptions.AccessTokenProvider =
+                        () => Task.FromResult<string?>(
+                            negotiate.AccessToken);
                 })
-            .ConfigureLogging(logging =>
+            .WithAutomaticReconnect(new[]
             {
-                logging.SetMinimumLevel(LogLevel.Trace);
-                logging.AddConsole();
+                TimeSpan.Zero,
+                TimeSpan.FromSeconds(2),
+                TimeSpan.FromSeconds(5),
+                TimeSpan.FromSeconds(10),
+                TimeSpan.FromSeconds(30)
             })
-            .WithAutomaticReconnect()
             .Build();
+    }
 
+    private void RegisterHandlers(
+        HubConnection connection,
+        ConnectionParameters parameters)
+    {
 
-        connection.On<string, List<PortalTrainDto>>("TrainStatus", ProcessTrainStatus);
+        // connection.On<string, List<PortalTrainDto>>(
+        //     "TrainStatus",
+        //     ProcessTrainStatus);
         connection.On<JsonElement>("TrainStatus", payload =>
         {
+            logger.LogInformation(
+                "!!! RAW TrainStatus RECEIVED !!! Kind={Kind}, Payload={Payload}",
+                payload.ValueKind,
+                payload.ToString());
+
             try
             {
-                if (payload.ValueKind !=
-                    JsonValueKind.Array)
+                if (payload.ValueKind != JsonValueKind.Array)
                 {
+                    logger.LogWarning(
+                        "TrainStatus payload is not an array. Kind={Kind}",
+                        payload.ValueKind);
+
                     return;
                 }
 
+                logger.LogInformation(
+                    "TrainStatus array length: {Length}",
+                    payload.GetArrayLength());
+
                 if (payload.GetArrayLength() < 2)
                 {
+                    logger.LogWarning("TrainStatus payload has less than 2 elements.");
                     return;
                 }
 
                 var source = payload[0].GetString() ?? string.Empty;
-                var trains = payload[1].Deserialize<List<PortalTrainDto>>();
+
+                var trains = payload[1].Deserialize<List<PortalTrainDto>>(
+                    new JsonSerializerOptions
+                    {
+                        PropertyNameCaseInsensitive = true
+                    });
+
+                logger.LogInformation(
+                    "TrainStatus parsed. Source={Source}, Count={Count}",
+                    source,
+                    trains?.Count ?? 0);
+
                 if (trains is null)
                 {
+                    logger.LogWarning("Unable to deserialize trains.");
                     return;
                 }
 
@@ -125,95 +264,191 @@ public sealed class TrainsWorker(
             }
             catch (Exception ex)
             {
-                logger.LogWarning(
+                logger.LogError(
                     ex,
-                    "Unable to parse TrainStatus payload.");
+                    "Error processing raw TrainStatus payload.");
             }
         });
 
         connection.Reconnecting += error =>
         {
-            logger.LogWarning(error, "Portal SignalR reconnecting...");
+            logger.LogWarning(
+                error,
+                "Portal Pasażera SignalR reconnecting...");
+
             return Task.CompletedTask;
         };
 
-        connection.Reconnected += connectionId =>
+        connection.Reconnected += async connectionId =>
         {
-            logger.LogInformation("Portal SignalR reconnected. " + "ConnectionId={ConnectionId}", connectionId);
-            return Task.CompletedTask;
+            logger.LogInformation(
+                "Portal Pasażera SignalR reconnected. ConnectionId={ConnectionId}",
+                connectionId);
+
+            try
+            {
+                await RegisterParametersAsync(
+                    connection,
+                    parameters,
+                    CancellationToken.None);
+
+                logger.LogInformation(
+                    "Portal Pasażera parameters registered again after reconnect.");
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(
+                    ex,
+                    "Failed to register Portal Pasażera parameters after reconnect.");
+
+                // Ważne:
+                // Nie rzucamy wyjątku z event handlera.
+                // AutomaticReconnect nadal może działać.
+            }
         };
 
         connection.Closed += error =>
         {
-            logger.LogWarning(error, "Portal SignalR connection closed.");
+            if (error is null)
+            {
+                logger.LogWarning(
+                    "Portal Pasażera SignalR connection closed.");
+            }
+            else
+            {
+                logger.LogWarning(
+                    error,
+                    "Portal Pasażera SignalR connection closed because of an error.");
+            }
+
             return Task.CompletedTask;
         };
-
-        logger.LogInformation("Connecting to Portal SignalR...");
-        await connection.StartAsync(cancellationToken);
-        const string lang = "PL";
-        const double zoom = 7.022935189742923;
-        const double minLat = 48.29702653973435;
-        const double minLon = 13.44729945766156;
-        const double maxLat = 55.52329783923743;
-        const double maxLon = 26.55270054233844;
-        const int selectedTrainNumber = 0;
-        const bool forcedRefresh = true;
-        var (tid, pid) = await GetConnectionParameters(cancellationToken);
-        await connection.InvokeAsync("RegisterParams", lang, zoom, minLat, minLon, maxLat, maxLon,
-            selectedTrainNumber, forcedRefresh, tid, pid, cancellationToken);
-
-        logger.LogInformation("CONNECTED to Portal Pasażera.");
-
-        try
-        {
-            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
-        }
-        finally
-        {
-            try
-            {
-                await connection.StopAsync(cancellationToken);
-            }
-            catch
-            {
-                // Ignorujemy błąd podczas zamykania.
-            }
-        }
     }
 
-    private void ProcessTrainStatus(string source, List<PortalTrainDto> trains)
+    private async Task RegisterParametersAsync(
+        HubConnection connection,
+        ConnectionParameters parameters,
+        CancellationToken cancellationToken)
+    {
+        logger.LogDebug(
+            "Registering Portal Pasażera parameters. TID={Tid}, PID={Pid}",
+            parameters.Tid,
+            parameters.Pid);
+
+        await connection.InvokeAsync(
+            "RegisterParams",
+            Language,
+            Zoom,
+            MinLatitude,
+            MinLongitude,
+            MaxLatitude,
+            MaxLongitude,
+            SelectedTrainNumber,
+            ForcedRefresh,
+            parameters.Tid,
+            parameters.Pid,
+            cancellationToken);
+
+        logger.LogDebug("Portal Pasażera parameters registered.");
+    }
+
+    private void ProcessTrainStatus(
+        string source,
+        List<PortalTrainDto> trains)
     {
         if (trains.Count == 0)
         {
+            logger.LogDebug(
+                "Received empty TrainStatus from {Source}.",
+                source);
+
             return;
         }
 
-        store.Upsert(trains);
-        logger.LogDebug("TrainStatus: source={Source}, count={Count}", source, trains.Count);
+        try
+        {
+            store.Upsert(trains);
+
+            logger.LogDebug(
+                "TrainStatus processed. Source={Source}, Count={Count}",
+                source,
+                trains.Count);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(
+                ex,
+                "Failed to store TrainStatus. Source={Source}, Count={Count}",
+                source,
+                trains.Count);
+        }
     }
 
-    private async Task<(string Tid, string Pid)> GetConnectionParameters(
+    private async Task<ConnectionParameters> GetConnectionParametersAsync(
         CancellationToken cancellationToken)
     {
+        logger.LogDebug(
+            "Fetching Portal Pasażera connection parameters from {Url}.",
+            options.Value.TokenUrl);
+
         var httpClient = httpClientFactory.CreateClient();
-        using var response = await httpClient.GetAsync(options.Value.TokenUrl, cancellationToken);
 
-        response.EnsureSuccessStatusCode();
-        var html = await response.Content.ReadAsStringAsync(cancellationToken);
-        var tidMatch = Regex.Match(html, """var\s+TID\s*=\s*['"]([^'"]*)['"]""");
-        var pidMatch = Regex.Match(html, """var\s+PID\s*=\s*['"]([^'"]*)['"]""");
+        using var response =
+            await httpClient.GetAsync(
+                options.Value.TokenUrl,
+                cancellationToken);
 
-        if (!tidMatch.Success)
+        var html =
+            await response.Content.ReadAsStringAsync(cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
         {
-            throw new Exception("Nie znaleziono TID");
+            throw new HttpRequestException(
+                $"Failed to fetch Portal Pasażera parameters. " +
+                $"Status={(int)response.StatusCode} " +
+                $"({response.ReasonPhrase}).");
         }
 
-        if (!pidMatch.Success)
-        {
-            throw new Exception("Nie znaleziono PID");
-        }
+        var tid = ExtractJavaScriptVariable(html, "TID");
+        var pid = ExtractJavaScriptVariable(html, "PID");
 
-        return (tidMatch.Groups[1].Value, pidMatch.Groups[1].Value);
+        logger.LogDebug(
+            "Portal Pasażera parameters retrieved successfully.");
+
+        return new ConnectionParameters(tid, pid);
     }
+
+    private static string ExtractJavaScriptVariable(
+        string html,
+        string variableName)
+    {
+        var pattern =
+            $@"\b(?:var|let|const)\s+{Regex.Escape(variableName)}\s*=\s*[""']([^""']+)[""']";
+
+        var match =
+            Regex.Match(
+                html,
+                pattern,
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+        if (!match.Success)
+        {
+            throw new InvalidOperationException(
+                $"Portal Pasażera page does not contain JavaScript variable '{variableName}'.");
+        }
+
+        return match.Groups[1].Value;
+    }
+
+    private sealed record ConnectionParameters(
+        string Tid,
+        string Pid);
+
+    private sealed record NegotiateResponse(
+        [property: JsonPropertyName("url")]
+        string? Url,
+
+        [property: JsonPropertyName("accessToken")]
+        string? AccessToken);
 }
+
