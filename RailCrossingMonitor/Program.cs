@@ -1,5 +1,6 @@
 ﻿using RailCrossingMonitor.Application;
 using RailCrossingMonitor.Application.Crossing;
+using RailCrossingMonitor.Application.RailwayTracks;
 using RailCrossingMonitor.Application.Trains;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -8,12 +9,19 @@ builder.Services.Configure<RailCrossingServiceOptions>(
     builder.Configuration.GetSection(RailCrossingServiceOptions.SectionName));
 builder.Services.Configure<TrainsOptions>(
     builder.Configuration.GetSection(TrainsOptions.SectionName));
+builder.Services.AddHttpClient("RailwayTracks", client =>
+{
+    client.Timeout = TimeSpan.FromMinutes(5);
+});
 builder.Services.AddHttpClient();
 builder.Services.AddHttpClient<RailwayCrossingService>();
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<TrainStore>();
 builder.Services.AddSingleton<CrossingStore>();
+builder.Services.AddSingleton<RailwayTrackStore>();
+builder.Services.AddSingleton<TrainPredictionService>();
 
+builder.Services.AddHostedService<RailwayTrackWorker>();
 builder.Services.AddHostedService<TrainsWorker>();
 builder.Services.AddHostedService<CrossingWorker>();
 builder.Services.AddCors(options =>
@@ -40,6 +48,7 @@ app.MapGet("/api/health", () =>
 });
 
 app.MapGet("/api/trains", (TrainStore store) => Results.Ok((object?)store.GetAll()));
+app.MapGet("/api/trains/predicted", (TrainPredictionService service) => Results.Ok(service.GetAll()));
 app.MapGet("/api/crossings/status", async (
     RailwayCrossingService service,
     CancellationToken cancellationToken) =>
@@ -49,4 +58,4 @@ app.MapGet("/api/crossings/status", async (
 });
 
 
-app.Run("http://localhost:5100");
+app.Run();

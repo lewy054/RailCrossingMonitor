@@ -16,6 +16,8 @@ import { useTrainStore } from '@/stores/trains-store'
 import { useCrossingStore } from '@/stores/crossing-store'
 
 import type { TrainViewModel } from '@/train-viewmodel'
+import type { PredictedTrainViewModel } from '@/predicted-train-viewmodel'
+
 import {
     BarrierState,
     CrossingState,
@@ -189,12 +191,15 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
 
     let map: OLMap | null = null
     let trainSource: VectorSource | null = null
+    let predictedTrainSource: VectorSource | null = null
     let crossingSource: VectorSource | null = null
+
     let resizeObserver: ResizeObserver | null = null
     let tooltipElement: HTMLElement | null = null
     let tooltipOverlay: Overlay | null = null
 
     const trainFeatures = new Map<number, Feature<Point>>()
+    const predictedTrainFeatures = new Map<number, Feature<Point>>()
     const crossingFeatures = new Map<string, Feature<Point>>()
 
     function getCrossingScale(): number {
@@ -229,12 +234,20 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
                 const context = state.context as CanvasRenderingContext2D
                 const pixel = pixelCoordinates as number[]
 
+                // NIE ZMIENIAMY rozmiaru działającej ikony.
                 const size = 32
+
                 const x = pixel[0] - size / 2
                 const y = pixel[1] - size / 2
 
                 if (trainImage.complete) {
-                    context.drawImage(trainImage, x, y, size, size)
+                    context.drawImage(
+                        trainImage,
+                        x,
+                        y,
+                        size,
+                        size
+                    )
                 }
 
                 const text = `${train.carrier} ${train.number}`
@@ -254,12 +267,73 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
                 )
 
                 context.fillStyle = '#222'
-                context.fillText(text, pixel[0], pixel[1] + 21)
+
+                context.fillText(
+                    text,
+                    pixel[0],
+                    pixel[1] + 21
+                )
             }
         })
     }
 
-    function createCrossingStyle(crossing: CrossingStatusViewModel): Style {
+    function createPredictedTrainStyle(): Style {
+        return new Style({
+            renderer: (pixelCoordinates, state) => {
+                const context = state.context as CanvasRenderingContext2D
+                const pixel = pixelCoordinates as number[]
+
+                // Taki sam rozmiar jak prawdziwy pociąg.
+                const size = 32
+
+                const x = pixel[0] - size / 2
+                const y = pixel[1] - size / 2
+
+                context.save()
+
+                // Szary/półprzezroczysty pociąg.
+                context.globalAlpha = 0.55
+
+                if (trainImage.complete) {
+                    context.filter = 'grayscale(1)'
+
+                    context.drawImage(
+                        trainImage,
+                        x,
+                        y,
+                        size,
+                        size
+                    )
+                }
+
+                context.restore()
+
+                // Delikatna przerywana obwódka,
+                // żeby predykcja była jednoznacznie widoczna.
+                context.save()
+
+                context.beginPath()
+                context.arc(
+                    pixel[0],
+                    pixel[1],
+                    18,
+                    0,
+                    Math.PI * 2
+                )
+
+                context.strokeStyle = '#6b7280'
+                context.lineWidth = 2
+                context.setLineDash([4, 3])
+                context.stroke()
+
+                context.restore()
+            }
+        })
+    }
+
+    function createCrossingStyle(
+        crossing: CrossingStatusViewModel
+    ): Style {
         return new Style({
             image: new Icon({
                 src: createCrossingSvg(crossing),
@@ -299,7 +373,11 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
             feature.set('train', train)
             feature.setStyle(createTrainStyle(train))
 
-            trainFeatures.set(train.id, feature)
+            trainFeatures.set(
+                train.id,
+                feature
+            )
+
             trainSource.addFeature(feature)
 
             return
@@ -316,7 +394,10 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
         }
 
         const trains = trainStore.filteredTrains
-        const currentIds = new Set(trains.map(train => train.id))
+
+        const currentIds = new Set(
+            trains.map(train => train.id)
+        )
 
         for (const [id, feature] of trainFeatures) {
             if (!currentIds.has(id)) {
@@ -328,9 +409,108 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
         for (const train of trains) {
             updateTrain(train)
         }
+
+        trainSource.changed()
     }
 
-    function updateCrossing(crossing: CrossingStatusViewModel) {
+    function updatePredictedTrain(
+        train: PredictedTrainViewModel
+    ) {
+        if (!predictedTrainSource) {
+            return
+        }
+
+        if (
+            !Number.isFinite(train.latitude) ||
+            !Number.isFinite(train.longitude)
+        ) {
+            return
+        }
+
+        const coordinates = fromLonLat([
+            train.longitude,
+            train.latitude
+        ])
+
+        let feature = predictedTrainFeatures.get(train.id)
+
+        if (!feature) {
+            feature = new Feature<Point>({
+                geometry: new Point(coordinates)
+            })
+
+            feature.set(
+                'type',
+                'predicted-train'
+            )
+
+            feature.set(
+                'predictedTrain',
+                train
+            )
+
+            feature.setStyle(
+                createPredictedTrainStyle()
+            )
+
+            predictedTrainFeatures.set(
+                train.id,
+                feature
+            )
+
+            predictedTrainSource.addFeature(feature)
+
+            return
+        }
+
+        // To jest najważniejsza część:
+        // za każdym pobraniem ustawiamy NOWĄ pozycję.
+        const geometry = feature.getGeometry()
+
+        if (geometry) {
+            geometry.setCoordinates(coordinates)
+        }
+
+        feature.set(
+            'predictedTrain',
+            train
+        )
+
+        feature.changed()
+    }
+
+    function syncPredictedTrains() {
+        if (!predictedTrainSource) {
+            return
+        }
+
+        const predictedTrains =
+            trainStore.predictedTrains
+
+        const currentIds = new Set(
+            predictedTrains.map(train => train.id)
+        )
+
+        for (const [id, feature] of predictedTrainFeatures) {
+            if (!currentIds.has(id)) {
+                predictedTrainSource.removeFeature(
+                    feature
+                )
+
+                predictedTrainFeatures.delete(id)
+            }
+        }
+
+        for (const train of predictedTrains) {
+            updatePredictedTrain(train)
+        }
+
+        predictedTrainSource.changed()
+    }
+
+    function updateCrossing(
+        crossing: CrossingStatusViewModel
+    ) {
         if (!crossingSource) {
             return
         }
@@ -347,28 +527,61 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
             crossing.latitude
         ])
 
-        let feature = crossingFeatures.get(crossing.id)
+        let feature = crossingFeatures.get(
+            crossing.id
+        )
 
         if (!feature) {
             feature = new Feature<Point>({
                 geometry: new Point(coordinates)
             })
 
-            feature.set('type', 'crossing')
-            feature.set('crossing', crossing)
-            feature.set('status', crossing)
-            feature.setStyle(createCrossingStyle(crossing))
+            feature.set(
+                'type',
+                'crossing'
+            )
 
-            crossingFeatures.set(crossing.id, feature)
+            feature.set(
+                'crossing',
+                crossing
+            )
+
+            feature.set(
+                'status',
+                crossing
+            )
+
+            feature.setStyle(
+                createCrossingStyle(crossing)
+            )
+
+            crossingFeatures.set(
+                crossing.id,
+                feature
+            )
+
             crossingSource.addFeature(feature)
 
             return
         }
 
-        feature.getGeometry()?.setCoordinates(coordinates)
-        feature.set('crossing', crossing)
-        feature.set('status', crossing)
-        feature.setStyle(createCrossingStyle(crossing))
+        feature.getGeometry()?.setCoordinates(
+            coordinates
+        )
+
+        feature.set(
+            'crossing',
+            crossing
+        )
+
+        feature.set(
+            'status',
+            crossing
+        )
+
+        feature.setStyle(
+            createCrossingStyle(crossing)
+        )
     }
 
     function syncCrossings() {
@@ -376,12 +589,19 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
             return
         }
 
-        const crossings = crossingStore.crossingsStatus
-        const currentIds = new Set(crossings.map(crossing => crossing.id))
+        const crossings =
+            crossingStore.crossingsStatus
+
+        const currentIds = new Set(
+            crossings.map(crossing => crossing.id)
+        )
 
         for (const [id, feature] of crossingFeatures) {
             if (!currentIds.has(id)) {
-                crossingSource.removeFeature(feature)
+                crossingSource.removeFeature(
+                    feature
+                )
+
                 crossingFeatures.delete(id)
             }
         }
@@ -389,6 +609,8 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
         for (const crossing of crossings) {
             updateCrossing(crossing)
         }
+
+        crossingSource.changed()
     }
 
     async function loadCrossings() {
@@ -396,7 +618,10 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
             await crossingStore.fetchCrossingsStatus()
             syncCrossings()
         } catch (error) {
-            console.error('Nie udało się pobrać przejazdów:', error)
+            console.error(
+                'Nie udało się pobrać przejazdów:',
+                error
+            )
         }
     }
 
@@ -440,17 +665,35 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
             return
         }
 
-        const stateLabel = getStateLabel(crossing.state)
-        const barrierLabel = getBarrierLabel(crossing)
-        const lightLabel = getLightLabel(crossing)
-        const stateColor = getStateColor(crossing.state)
+        const stateLabel =
+            getStateLabel(crossing.state)
 
-        const eta = Number.isFinite(crossing.etaSeconds)
-            ? `${Math.max(0, Math.round(crossing.etaSeconds))} s`
+        const barrierLabel =
+            getBarrierLabel(crossing)
+
+        const lightLabel =
+            getLightLabel(crossing)
+
+        const stateColor =
+            getStateColor(crossing.state)
+
+        const eta = Number.isFinite(
+            crossing.etaSeconds
+        )
+            ? `${Math.max(
+                0,
+                Math.round(
+                    crossing.etaSeconds!
+                )
+            )} s`
             : '-'
 
-        const distance = Number.isFinite(crossing.distanceMeters)
-            ? `${Math.round(crossing.distanceMeters)} m`
+        const distance = Number.isFinite(
+            crossing.distanceMeters
+        )
+            ? `${Math.round(
+                crossing.distanceMeters!
+            )} m`
             : '-'
 
         const train = crossing.trainNumber
@@ -522,7 +765,9 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
                 return
             }
 
-            const train = feature.get('train') as TrainViewModel | undefined
+            const train = feature.get(
+                'train'
+            ) as TrainViewModel | undefined
 
             if (train) {
                 trainStore.selectTrain(train)
@@ -534,7 +779,10 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
             ) as CrossingStatusViewModel | undefined
 
             if (crossing) {
-                showCrossingTooltip(crossing, event.coordinate)
+                showCrossingTooltip(
+                    crossing,
+                    event.coordinate
+                )
             }
         })
 
@@ -543,16 +791,18 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
                 return
             }
 
-            const target = map.getTargetElement()
+            const target =
+                map.getTargetElement()
 
             if (!target) {
                 return
             }
 
-            const feature = map.forEachFeatureAtPixel(
-                event.pixel,
-                feature => feature
-            )
+            const feature =
+                map.forEachFeatureAtPixel(
+                    event.pixel,
+                    feature => feature
+                )
 
             if (!feature) {
                 hideTooltip()
@@ -570,7 +820,10 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
 
             target.style.cursor = 'pointer'
 
-            showCrossingTooltip(crossing, event.coordinate)
+            showCrossingTooltip(
+                crossing,
+                event.coordinate
+            )
         })
 
         map.getTargetElement().addEventListener(
@@ -585,11 +838,17 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
         }
 
         trainSource = new VectorSource()
+        predictedTrainSource = new VectorSource()
         crossingSource = new VectorSource()
 
         const crossingLayer = new VectorLayer({
             source: crossingSource
         })
+
+        const predictedTrainLayer =
+            new VectorLayer({
+                source: predictedTrainSource
+            })
 
         const trainLayer = new VectorLayer({
             source: trainSource
@@ -601,18 +860,29 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
                 new TileLayer({
                     source: new OSM()
                 }),
+
+                // Przejazdy zostają na swoim miejscu.
                 crossingLayer,
+
+                // Predykcja pod rzeczywistym pociągiem.
+                predictedTrainLayer,
+
+                // Rzeczywisty pociąg jest na wierzchu.
                 trainLayer
             ],
             view: new View({
-                center: fromLonLat([19.4, 52.1]),
+                center: fromLonLat([
+                    19.4,
+                    52.1
+                ]),
                 zoom: 6,
                 minZoom: 5,
                 maxZoom: 18
             })
         })
 
-        tooltipElement = document.getElementById('tooltip')
+        tooltipElement =
+            document.getElementById('tooltip')
 
         if (tooltipElement) {
             tooltipElement.style.display = 'none'
@@ -627,14 +897,20 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
             map.addOverlay(tooltipOverlay)
         }
 
-        resizeObserver = new ResizeObserver(() => {
-            map?.updateSize()
-        })
+        resizeObserver =
+            new ResizeObserver(() => {
+                map?.updateSize()
+            })
 
-        resizeObserver.observe(mapElement.value)
+        resizeObserver.observe(
+            mapElement.value
+        )
 
         setupMapInteractions()
+
         syncTrains()
+        syncPredictedTrains()
+
         void loadCrossings()
 
         map.getView().on(
@@ -648,17 +924,22 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
     }
 
     function centerOnSelectedTrain() {
-        if (!map || trainStore.selectedTrainId === null) {
+        if (
+            !map ||
+            trainStore.selectedTrainId === null
+        ) {
             return
         }
 
-        const feature = trainFeatures.get(
-            trainStore.selectedTrainId
-        )
+        const feature =
+            trainFeatures.get(
+                trainStore.selectedTrainId
+            )
 
-        const coordinates = feature
-            ?.getGeometry()
-            ?.getCoordinates()
+        const coordinates =
+            feature
+                ?.getGeometry()
+                ?.getCoordinates()
 
         if (!coordinates) {
             return
@@ -680,23 +961,32 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
             return
         }
 
-        const target = map.getTargetElement()
+        const target =
+            map.getTargetElement()
 
         if (target) {
             target.style.cursor = ''
-            target.removeEventListener('mouseleave', hideTooltip)
+
+            target.removeEventListener(
+                'mouseleave',
+                hideTooltip
+            )
         }
 
         map.setTarget(undefined)
 
         trainSource?.clear()
+        predictedTrainSource?.clear()
         crossingSource?.clear()
 
         trainFeatures.clear()
+        predictedTrainFeatures.clear()
         crossingFeatures.clear()
 
         trainSource = null
+        predictedTrainSource = null
         crossingSource = null
+
         tooltipOverlay = null
         tooltipElement = null
         map = null
@@ -705,6 +995,14 @@ export function useMap(mapElement: Ref<HTMLElement | null>) {
     watch(
         () => trainStore.filteredTrains,
         syncTrains,
+        {
+            deep: true
+        }
+    )
+
+    watch(
+        () => trainStore.predictedTrains,
+        syncPredictedTrains,
         {
             deep: true
         }

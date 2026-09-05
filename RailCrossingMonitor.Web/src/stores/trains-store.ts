@@ -1,15 +1,22 @@
-﻿import {computed, ref} from 'vue'
-import {defineStore} from 'pinia'
+﻿import { computed, ref } from 'vue'
+import { defineStore } from 'pinia'
 
-import type {TrainViewModel} from '@/train-viewmodel'
+import type { TrainViewModel } from '@/train-viewmodel'
+import type { PredictedTrainViewModel } from '@/predicted-train-viewmodel'
 
 export const useTrainStore = defineStore('trains', () => {
     const trains = ref<TrainViewModel[]>([])
+    const predictedTrains = ref<PredictedTrainViewModel[]>([])
     const filteredTrains = ref<TrainViewModel[]>([])
+
     const selectedTrainId = ref<number | null>(null)
     const searchQuery = ref('')
+
     const isLoading = ref(false)
+    const isPredictionLoading = ref(false)
+
     const error = ref<string | null>(null)
+    const predictionError = ref<string | null>(null)
 
     const trainCount = computed(() => trains.value.length)
 
@@ -17,15 +24,30 @@ export const useTrainStore = defineStore('trains', () => {
         if (selectedTrainId.value === null) {
             return null
         }
-        return trains.value.find(train => train.id === selectedTrainId.value) ?? null
+
+        return trains.value.find(
+            train => train.id === selectedTrainId.value
+        ) ?? null
     })
 
+    const selectedPredictedTrain = computed(() => {
+        if (selectedTrainId.value === null) {
+            return null
+        }
+
+        return predictedTrains.value.find(
+            train => train.id === selectedTrainId.value
+        ) ?? null
+    })
+
+    const connected = computed(() => error.value === null)
+
     function filterTrains() {
-        const query = searchQuery.value?.trim() ?? ''
+        const query = searchQuery.value.trim()
 
         if (!query) {
             filteredTrains.value = trains.value
-            return;
+            return
         }
 
         filteredTrains.value = trains.value.filter(train =>
@@ -34,8 +56,6 @@ export const useTrainStore = defineStore('trains', () => {
                 .includes(query.toLowerCase())
         )
     }
-
-    const connected = computed(() => error.value === null)
 
     async function fetchTrains() {
         isLoading.value = true
@@ -46,7 +66,7 @@ export const useTrainStore = defineStore('trains', () => {
             )
 
             if (!response.ok) {
-
+                throw new Error(`HTTP ${response.status}`)
             }
 
             trains.value = await response.json()
@@ -60,6 +80,33 @@ export const useTrainStore = defineStore('trains', () => {
                 : 'Nie udało się pobrać pociągów'
         } finally {
             isLoading.value = false
+        }
+    }
+
+    async function fetchPredictedTrains() {
+        isPredictionLoading.value = true
+
+        try {
+            const response = await fetch(
+                'http://localhost:5100/api/trains/predicted'
+            )
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`)
+            }
+
+            predictedTrains.value = await response.json()
+            predictionError.value = null
+        } catch (err) {
+            console.error('Failed to fetch predicted trains:', err)
+
+            predictionError.value = err instanceof Error
+                ? err.message
+                : 'Nie udało się pobrać predykcji'
+
+            predictedTrains.value = []
+        } finally {
+            isPredictionLoading.value = false
         }
     }
 
@@ -77,17 +124,23 @@ export const useTrainStore = defineStore('trains', () => {
 
     return {
         trains,
+        predictedTrains,
         filteredTrains,
         selectedTrainId,
         selectedTrain,
+        selectedPredictedTrain,
         trainCount,
         isLoading,
+        isPredictionLoading,
         error,
+        predictionError,
         connected,
         searchQuery,
         fetchTrains,
+        fetchPredictedTrains,
         filterTrains,
         selectTrain,
+        selectTrainById,
         clearSelection
     }
 })

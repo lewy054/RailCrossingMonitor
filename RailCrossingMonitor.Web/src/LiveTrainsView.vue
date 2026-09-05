@@ -25,10 +25,12 @@ let refreshTimer: number | undefined
 
 onMounted(async () => {
   await trainStore.fetchTrains()
+  await trainStore.fetchPredictedTrains()
   await crossingStore.fetchCrossingsStatus()
 
   refreshTimer = window.setInterval(() => {
     trainStore.fetchTrains()
+    trainStore.fetchPredictedTrains()
     crossingStore.fetchCrossingsStatus()
   }, 2000)
 })

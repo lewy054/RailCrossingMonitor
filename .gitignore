@@ -1,4 +1,68 @@
-﻿# Dependencies
+﻿# Build output
+bin/
+obj/
+out/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# JetBrains Rider / ReSharper
+.idea/
+_ReSharper*/
+*.[Rr]e[Ss]harper
+*.DotSettings.user
+
+# VS Code
+.vscode/
+
+# NuGet
+packages/
+*.nupkg
+*.snupkg
+
+# Test results / coverage
+TestResults/
+coverage/
+*.trx
+*.coverage
+*.coveragexml
+
+# Logs
+*.log
+logs/
+
+# ASP.NET generated/local files
+wwwroot/lib/
+
+# Local configuration
+appsettings.Local.json
+appsettings.*.Local.json
+
+# User secrets
+secrets.json
+
+# Local databases
+*.db
+*.db-shm
+*.db-wal
+
+# Certificates / keys
+*.pfx
+*.p12
+*.key
+*.pem
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+
+# Dependencies
 node_modules/
 
 # Build
