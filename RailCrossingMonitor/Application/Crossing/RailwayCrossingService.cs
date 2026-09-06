@@ -10,7 +10,7 @@ namespace RailCrossingMonitor.Application.Crossing;
 
 public sealed class RailwayCrossingService(
     HttpClient httpClient,
-    IOptions<RailCrossingServiceOptions> options,
+    IOptions<RailwayCrossingOptions> options,
     TrainStore trainStore,
     RailwayTrackStore trackStore,
     CrossingStore crossingStore,
@@ -39,35 +39,18 @@ public sealed class RailwayCrossingService(
                 now - train.ReceivedAtUtc <= MaxGpsAge)
             .ToList();
 
-        /*
-         * Mapujemy każdy pociąg na tor tylko RAZ.
-         *
-         * To jest ważne, bo później możemy sprawdzać
-         * ten sam pociąg względem setek przejazdów
-         * bez ponownego Match().
-         */
-        var trainContexts = trains
-            .Select(train =>
+        var trainContexts = trains.Select(train =>
             {
-                var match = trackStore.Match(
-                    train.Latitude,
-                    train.Longitude,
-                    train.HeadingDegrees,
+                var match = trackStore.Match(train.Latitude, train.Longitude, train.HeadingDegrees,
                     maxDistanceMeters: 150);
-
-                return new TrainTrackContext(
-                    train,
-                    match);
+                return new TrainTrackContext(train, match);
             })
             .Where(context => context.Match is not null)
             .ToList();
 
         var statuses = crossings
             .Select(crossing =>
-                CalculateStatus(
-                    crossing,
-                    trainContexts,
-                    now))
+                CalculateStatus(crossing, trainContexts, now))
             .ToList();
 
         return Task.FromResult(statuses);
@@ -77,37 +60,16 @@ public sealed class RailwayCrossingService(
         CancellationToken cancellationToken)
     {
         var url =
-            $"{options.Value.Url}" +
-            "?SERVICE=WFS" +
-            "&VERSION=2.0.0" +
-            "&REQUEST=GetFeature" +
-            "&TYPENAMES=ms:PKP_PLK" +
-            "&SRSNAME=EPSG:4326";
+            $"{options.Value.Url}?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature&TYPENAMES=ms:PKP_PLK&SRSNAME=EPSG:4326";
 
-        var stopwatch = Stopwatch.StartNew();
 
-        using var response = await httpClient.GetAsync(
-            url,
-            cancellationToken);
-
+        using var response = await httpClient.GetAsync(url, cancellationToken);
         response.EnsureSuccessStatusCode();
-
-        var xml = await response.Content.ReadAsStringAsync(
-            cancellationToken);
-
-        stopwatch.Stop();
-
-        Console.WriteLine(
-            $"WFS: {(int)response.StatusCode} " +
-            $"czas={stopwatch.ElapsedMilliseconds}ms " +
-            $"bytes={xml.Length}");
-
+        var xml = await response.Content.ReadAsStringAsync(cancellationToken);
         var crossings = ParseXml(xml);
-
         crossingStore.Set(crossings);
 
-        Console.WriteLine(
-            $"Załadowano {crossings.Count} przejazdów kolejowych.");
+        logger.LogInformation("Loaded {CrossingsCount} railway crossings.", crossings.Count);
     }
 
     private RailwayCrossingStatus CalculateStatus(
@@ -115,196 +77,98 @@ public sealed class RailwayCrossingService(
         IReadOnlyCollection<TrainTrackContext> trains,
         DateTimeOffset now)
     {
-        var candidate = FindApproachingTrain(
-            crossing,
-            trains,
-            now);
+        var candidate = FindApproachingTrain(crossing, trains, now);
 
         if (candidate is null)
         {
             return CreateSafeStatus(crossing);
         }
 
-        var protection = CalculateProtection(
-            crossing.Category,
-            candidate.EtaSeconds);
+        var protection = CalculateProtection(crossing.Category, candidate.EtaSeconds);
 
         return new RailwayCrossingStatus
         {
             Id = crossing.Id,
             Name = crossing.Name,
             Category = crossing.Category,
-
             State = protection.State,
             Barriers = protection.Barriers,
             Lights = protection.Lights,
-
             TrainId = candidate.Train.Id,
             TrainNumber = candidate.Train.Number,
             Carrier = candidate.Train.Carrier,
-
             DistanceMeters = candidate.DistanceMeters,
             EtaSeconds = candidate.EtaSeconds,
-
             Latitude = crossing.Latitude,
             Longitude = crossing.Longitude
         };
     }
 
-    private TrainTrackCandidate? FindApproachingTrain(
-        RailwayCrossing crossing,
-        IReadOnlyCollection<TrainTrackContext> trains,
-        DateTimeOffset now)
+    private TrainTrackCandidate? FindApproachingTrain(RailwayCrossing crossing,
+        IReadOnlyCollection<TrainTrackContext> trains, DateTimeOffset now)
     {
-        /*
-         * Jeden przejazd może leżeć na kilku torach.
-         *
-         * Przykład:
-         *
-         * tor 101 ----\
-         *               X przejazd
-         * tor 102 ----/
-         *
-         * MatchAll() zwróci każdy właściwy tor.
-         */
-        var crossingTracks = trackStore.MatchAll(
-            crossing.Latitude,
-            crossing.Longitude,
-            maxDistanceMeters: 30);
+        var crossingTracks = trackStore.MatchAll(crossing.Latitude, crossing.Longitude, maxDistanceMeters: 30);
 
         if (crossingTracks.Count == 0)
+        {
             return null;
+        }
 
         TrainTrackCandidate? best = null;
 
-        foreach (var context in trains)
+        foreach (var (train, trainMatch) in trains)
         {
-            var train = context.Train;
-            var trainMatch = context.Match;
-
             if (trainMatch is null)
+            {
                 continue;
+            }
 
-            var elapsed =
-                now - train.ReceivedAtUtc;
-
-            /*
-             * Nie pozwalamy, żeby stare GPS powodowało
-             * nieograniczoną ekstrapolację.
-             */
+            var elapsed = now - train.ReceivedAtUtc;
             if (elapsed < TimeSpan.Zero)
             {
                 elapsed = TimeSpan.Zero;
             }
 
             if (elapsed > MaxGpsAge)
+            {
                 continue;
+            }
 
-            /*
-             * KLUCZOWE:
-             *
-             * Nie liczymy:
-             *
-             * GPS + lat/lon + prosta.
-             *
-             * Liczymy:
-             *
-             * pozycja na torze + prędkość * czas.
-             */
             var predictedDistanceAlongTrack =
-                trackStore.PredictDistanceAlongTrack(
-                    trainMatch,
-                    train.SpeedKmh!.Value,
-                    elapsed,
-                    MaxPredictionSeconds);
-            // logger.LogInformation(
-            //     "TRAIN {TrainId}: GPS={Lat:F6},{Lon:F6}, " +
-            //     "speed={Speed:F1} km/h, age={Age:F1}s, " +
-            //     "track={TrackId}, actualAlong={Actual:F1}m, " +
-            //     "predictedAlong={Predicted:F1}m",
-            //     train.Id,
-            //     train.Latitude,
-            //     train.Longitude,
-            //     train.SpeedKmh,
-            //     elapsed.TotalSeconds,
-            //     context.Match.Track.Id,
-            //     context.Match.DistanceAlongTrackMeters,
-            //     predictedDistanceAlongTrack);
+                RailwayTrackStore.PredictDistanceAlongTrack(trainMatch, train.SpeedKmh!.Value, elapsed);
+
             foreach (var crossingMatch in crossingTracks)
             {
-                /*
-                 * Pociąg i przejazd muszą być na dokładnie
-                 * tym samym torze PLK.
-                 */
-                if (trainMatch.Track.Id !=
-                    crossingMatch.Track.Id)
+                if (trainMatch.Track.Id != crossingMatch.Track.Id)
                 {
                     continue;
                 }
 
-                /*
-                 * Pozycja przejazdu na torze:
-                 *
-                 * np. 5432 m
-                 *
-                 * Przewidywana pozycja pociągu:
-                 *
-                 * np. 4920 m
-                 *
-                 * => 512 m do przejazdu
-                 */
-                var distanceAlongTrack =
-                    crossingMatch.DistanceAlongTrackMeters -
-                    predictedDistanceAlongTrack;
-
-                /*
-                 * Jeżeli pociąg jedzie przeciwnie do kierunku
-                 * geometrii PLK, odwracamy znak.
-                 */
+                var distanceAlongTrack = crossingMatch.DistanceAlongTrackMeters - predictedDistanceAlongTrack;
                 if (!trainMatch.Forward)
                 {
                     distanceAlongTrack = -distanceAlongTrack;
                 }
 
-                /*
-                 * Pociąg maksymalnie 20 m za przejazdem
-                 * traktujemy jako będący już przy przejeździe.
-                 */
-                if (distanceAlongTrack < -20)
+                if (distanceAlongTrack is < -20 or > 100_000)
+                {
                     continue;
+                }
 
-                /*
-                 * Nie interesują nas przejazdy absurdalnie
-                 * daleko od pociągu.
-                 */
-                if (distanceAlongTrack > 100_000)
-                    continue;
-
-                var speedKmh =
-                    train.SpeedKmh.Value;
+                var speedKmh = train.SpeedKmh.Value;
 
                 if (speedKmh < 5)
+                {
                     continue;
+                }
 
-                var speedMps =
-                    speedKmh / 3.6;
+                var speedMps = speedKmh / 3.6;
+                var etaSeconds = Math.Max(0, distanceAlongTrack) / speedMps;
 
-                var etaSeconds =
-                    Math.Max(0, distanceAlongTrack) /
-                    speedMps;
+                var candidate = new TrainTrackCandidate(train, trainMatch, crossingMatch,
+                    Math.Max(0, distanceAlongTrack), etaSeconds);
 
-                var candidate = new TrainTrackCandidate(
-                    Train: train,
-                    TrainMatch: trainMatch,
-                    CrossingMatch: crossingMatch,
-                    DistanceMeters: Math.Max(
-                        0,
-                        distanceAlongTrack),
-                    EtaSeconds: etaSeconds);
-
-                if (best is null ||
-                    candidate.EtaSeconds <
-                    best.EtaSeconds)
+                if (best is null || candidate.EtaSeconds < best.EtaSeconds)
                 {
                     best = candidate;
                 }
@@ -314,29 +178,23 @@ public sealed class RailwayCrossingService(
         return best;
     }
 
-    private static RailwayCrossingStatus CreateSafeStatus(
-        RailwayCrossing crossing)
+    private static RailwayCrossingStatus CreateSafeStatus(RailwayCrossing crossing)
     {
-        var category =
-            NormalizeCategory(crossing.Category);
-
+        var category = NormalizeCategory(crossing.Category);
         return new RailwayCrossingStatus
         {
             Id = crossing.Id,
             Name = crossing.Name,
             Category = crossing.Category,
-
             State = category == "F"
                 ? CrossingState.Stop
                 : CrossingState.CanGo,
-
             Barriers = category switch
             {
                 "B" or "E" => BarrierState.Open,
                 "F" => BarrierState.Closed,
                 _ => BarrierState.None
             },
-
             Lights = category switch
             {
                 "B" or "C" or "E" =>
@@ -345,27 +203,22 @@ public sealed class RailwayCrossingService(
                 _ =>
                     LightState.None
             },
-
             Latitude = crossing.Latitude,
             Longitude = crossing.Longitude
         };
     }
 
-    private static bool IsValidTrain(
-        TrainPosition train)
+    private static bool IsValidTrain(TrainPosition train)
     {
-        if (train.SpeedKmh is not > 5)
+        if (train.SpeedKmh is not > 5 or > 300)
+        {
             return false;
-
-        if (train.SpeedKmh > 300)
-            return false;
+        }
 
         return true;
     }
 
-    private static ProtectionState CalculateProtection(
-        string category,
-        double etaSeconds)
+    private static ProtectionState CalculateProtection(string category, double etaSeconds)
     {
         return NormalizeCategory(category) switch
         {
@@ -376,65 +229,41 @@ public sealed class RailwayCrossingService(
             "E" => CalculateCategoryE(etaSeconds),
             "F" => CalculateCategoryF(),
 
-            _ => new ProtectionState(
-                CrossingState.Unknown,
-                BarrierState.Unknown,
-                LightState.Unknown)
+            _ => new ProtectionState(CrossingState.Unknown, BarrierState.Unknown, LightState.Unknown)
         };
     }
 
-    private static ProtectionState CalculateCategoryA(
-        double etaSeconds)
+    private static ProtectionState CalculateCategoryA(double etaSeconds)
     {
         if (etaSeconds > 120)
         {
-            return new ProtectionState(
-                CrossingState.CanGo,
-                BarrierState.Unknown,
-                LightState.Off);
+            return new ProtectionState(CrossingState.CanGo, BarrierState.Unknown, LightState.Off);
         }
 
-        return new ProtectionState(
-            CrossingState.Caution,
-            BarrierState.Unknown,
-            LightState.Unknown);
+        return new ProtectionState(CrossingState.Caution, BarrierState.Unknown, LightState.Unknown);
     }
 
-    private static ProtectionState CalculateCategoryB(
-        double etaSeconds)
+    private static ProtectionState CalculateCategoryB(double etaSeconds)
     {
         const double warningSeconds = 8;
         const double barrierClosingSeconds = 10;
 
-        if (etaSeconds >
-            warningSeconds + barrierClosingSeconds)
+        if (etaSeconds > warningSeconds + barrierClosingSeconds)
         {
-            return new ProtectionState(
-                CrossingState.CanGo,
-                BarrierState.Open,
-                LightState.Off);
+            return new ProtectionState(CrossingState.CanGo, BarrierState.Open, LightState.Off);
         }
 
         if (etaSeconds > barrierClosingSeconds)
         {
-            return new ProtectionState(
-                CrossingState.Caution,
-                BarrierState.Open,
-                LightState.FlashingRed);
+            return new ProtectionState(CrossingState.Caution, BarrierState.Open, LightState.FlashingRed);
         }
 
         if (etaSeconds > 0)
         {
-            return new ProtectionState(
-                CrossingState.Stop,
-                BarrierState.Closing,
-                LightState.FlashingRed);
+            return new ProtectionState(CrossingState.Stop, BarrierState.Closing, LightState.FlashingRed);
         }
 
-        return new ProtectionState(
-            CrossingState.Stop,
-            BarrierState.Closed,
-            LightState.FlashingRed);
+        return new ProtectionState(CrossingState.Stop, BarrierState.Closed, LightState.FlashingRed);
     }
 
     private static ProtectionState CalculateCategoryC(
@@ -444,95 +273,61 @@ public sealed class RailwayCrossingService(
 
         if (etaSeconds > warningSeconds)
         {
-            return new ProtectionState(
-                CrossingState.CanGo,
-                BarrierState.None,
-                LightState.Off);
+            return new ProtectionState(CrossingState.CanGo, BarrierState.None, LightState.Off);
         }
 
-        return new ProtectionState(
-            CrossingState.Stop,
-            BarrierState.None,
-            LightState.FlashingRed);
+        return new ProtectionState(CrossingState.Stop, BarrierState.None, LightState.FlashingRed);
     }
 
     private static ProtectionState CalculateCategoryD()
     {
-        return new ProtectionState(
-            CrossingState.CanGo,
-            BarrierState.None,
-            LightState.None);
+        return new ProtectionState(CrossingState.CanGo, BarrierState.None, LightState.None);
     }
 
-    private static ProtectionState CalculateCategoryE(
-        double etaSeconds)
+    private static ProtectionState CalculateCategoryE(double etaSeconds)
     {
         const double warningSeconds = 8;
         const double closingSeconds = 10;
 
-        if (etaSeconds >
-            warningSeconds + closingSeconds)
+        if (etaSeconds > warningSeconds + closingSeconds)
         {
-            return new ProtectionState(
-                CrossingState.CanGo,
-                BarrierState.Open,
-                LightState.Off);
+            return new ProtectionState(CrossingState.CanGo, BarrierState.Open, LightState.Off);
         }
 
         if (etaSeconds > closingSeconds)
         {
-            return new ProtectionState(
-                CrossingState.Caution,
-                BarrierState.Open,
-                LightState.FlashingRed);
+            return new ProtectionState(CrossingState.Caution, BarrierState.Open, LightState.FlashingRed);
         }
 
         if (etaSeconds > 0)
         {
-            return new ProtectionState(
-                CrossingState.Stop,
-                BarrierState.Closing,
-                LightState.FlashingRed);
+            return new ProtectionState(CrossingState.Stop, BarrierState.Closing, LightState.FlashingRed);
         }
 
-        return new ProtectionState(
-            CrossingState.Stop,
-            BarrierState.Closed,
-            LightState.FlashingRed);
+        return new ProtectionState(CrossingState.Stop, BarrierState.Closed, LightState.FlashingRed);
     }
 
     private static ProtectionState CalculateCategoryF()
     {
-        return new ProtectionState(
-            CrossingState.Stop,
-            BarrierState.Closed,
-            LightState.None);
+        return new ProtectionState(CrossingState.Stop, BarrierState.Closed, LightState.None);
     }
 
-    private static string NormalizeCategory(
-        string? category)
+    private static string NormalizeCategory(string? category)
     {
-        return category?
-            .Trim()
-            .ToUpperInvariant() ?? "";
+        return category?.Trim().ToUpperInvariant() ?? "";
     }
 
-    private static List<RailwayCrossing> ParseXml(
-        string xml)
+    private static List<RailwayCrossing> ParseXml(string xml)
     {
         var document = XDocument.Parse(xml);
 
-        XNamespace ms =
-            "http://mapserver.gis.umn.edu/mapserver";
+        XNamespace ms = "http://mapserver.gis.umn.edu/mapserver";
 
-        XNamespace gml =
-            "http://www.opengis.net/gml/3.2";
+        XNamespace gml = "http://www.opengis.net/gml/3.2";
 
-        var result =
-            new List<RailwayCrossing>();
+        var result = new List<RailwayCrossing>();
 
-        foreach (var crossing in
-                 document.Descendants(ms + "PKP_PLK"))
+        foreach (var crossing in document.Descendants(ms + "PKP_PLK"))
         {
             var pos = crossing
                 .Descendants(gml + "Point")
@@ -541,60 +336,34 @@ public sealed class RailwayCrossingService(
                 ?.Value;
 
             if (string.IsNullOrWhiteSpace(pos))
-                continue;
-
-            var coordinates = pos.Split(
-                ' ',
-                StringSplitOptions.RemoveEmptyEntries);
-
-            if (coordinates.Length < 2)
-                continue;
-
-            if (!double.TryParse(
-                    coordinates[0],
-                    NumberStyles.Float,
-                    CultureInfo.InvariantCulture,
-                    out var latitude))
             {
                 continue;
             }
 
-            if (!double.TryParse(
-                    coordinates[1],
-                    NumberStyles.Float,
-                    CultureInfo.InvariantCulture,
-                    out var longitude))
+            var coordinates = pos.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+            if (coordinates.Length < 2)
+            {
+                continue;
+            }
+
+            if (!double.TryParse(coordinates[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var latitude))
+            {
+                continue;
+            }
+
+            if (!double.TryParse(coordinates[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var longitude))
             {
                 continue;
             }
 
             result.Add(new RailwayCrossing
             {
-                Id =
-                    crossing
-                        .Element(ms + "GML_ID")
-                        ?.Value ?? "",
-
-                Name =
-                    crossing
-                        .Element(ms + "NAZWA")
-                        ?.Value ?? "",
-
-                Category =
-                    crossing
-                        .Element(ms + "KATEGORIA")
-                        ?.Value ?? "",
-
-                StationRoute =
-                    crossing
-                        .Element(ms + "STAC_SZLAK")
-                        ?.Value ?? "",
-
-                Manager =
-                    crossing
-                        .Element(ms + "IDDE")
-                        ?.Value ?? "",
-
+                Id = crossing.Element(ms + "GML_ID")?.Value ?? "",
+                Name = crossing.Element(ms + "NAZWA")?.Value ?? "",
+                Category = crossing.Element(ms + "KATEGORIA")?.Value ?? "",
+                StationRoute = crossing.Element(ms + "STAC_SZLAK")?.Value ?? "",
+                Manager = crossing.Element(ms + "IDDE")?.Value ?? "",
                 Latitude = latitude,
                 Longitude = longitude
             });
@@ -602,15 +371,4 @@ public sealed class RailwayCrossingService(
 
         return result;
     }
-
-    private sealed record TrainTrackContext(
-        TrainPosition Train,
-        TrackMatch? Match);
-
-    private sealed record TrainTrackCandidate(
-        TrainPosition Train,
-        TrackMatch TrainMatch,
-        TrackMatch CrossingMatch,
-        double DistanceMeters,
-        double EtaSeconds);
 }

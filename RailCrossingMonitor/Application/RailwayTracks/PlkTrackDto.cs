@@ -33,22 +33,22 @@ internal sealed class PlkGeometry
 internal sealed class PlkTrackProperties
 {
     [JsonPropertyName("ID")]
-    public int ID { get; init; }
+    public int Id { get; init; }
 
     [JsonPropertyName("ID_LINII")]
-    public int ID_LINII { get; init; }
+    public int LineId { get; init; }
 
     [JsonPropertyName("NUMER")]
-    public int NUMER { get; init; }
+    public int Number { get; init; }
 
     [JsonPropertyName("NR_TORU_LINII")]
-    public int NR_TORU_LINII { get; init; }
+    public int LineTrackNumber { get; init; }
 
     [JsonPropertyName("KIER_TORU")]
-    public string? KIER_TORU { get; init; }
+    public string? TrackDirection { get; init; }
 
     [JsonPropertyName("NAZWA")]
-    public string? NAZWA { get; init; }
+    public string? Name { get; init; }
 
     [JsonPropertyName("KM_P")]
     public double KM_P { get; init; }
@@ -57,5 +57,5 @@ internal sealed class PlkTrackProperties
     public double KM_K { get; init; }
 
     [JsonPropertyName("DLUGOSC")]
-    public double DLUGOSC { get; init; }
+    public double Lenght { get; init; }
 }

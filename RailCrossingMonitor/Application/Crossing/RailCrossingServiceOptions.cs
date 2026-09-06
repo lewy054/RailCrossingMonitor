@@ -1,7 +1,7 @@
 namespace RailCrossingMonitor.Application.Crossing;
 
-public class RailCrossingServiceOptions
+public class RailwayCrossingOptions
 {
-    public static string SectionName = "RailCrossingOptions";
+    public static string SectionName = "RailwayCrossingOptions";
     public string Url { get; set; }
 }

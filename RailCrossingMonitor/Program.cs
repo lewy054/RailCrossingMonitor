@@ -5,10 +5,12 @@ using RailCrossingMonitor.Application.Trains;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.Configure<RailCrossingServiceOptions>(
-    builder.Configuration.GetSection(RailCrossingServiceOptions.SectionName));
+builder.Services.Configure<RailwayCrossingOptions>(
+    builder.Configuration.GetSection(RailwayCrossingOptions.SectionName));
 builder.Services.Configure<TrainsOptions>(
     builder.Configuration.GetSection(TrainsOptions.SectionName));
+builder.Services.Configure<RailwayTracksOptions>(
+    builder.Configuration.GetSection(RailwayTracksOptions.SectionName));
 builder.Services.AddHttpClient("RailwayTracks", client =>
 {
     client.Timeout = TimeSpan.FromMinutes(5);

@@ -1,14 +1,33 @@
 ﻿namespace RailCrossingMonitor.Application.Trains;
 
+using System.Text.Json.Serialization;
+
 public sealed class PortalTrainDto
 {
-    public long t { get; set; }
-    public double s { get; set; }
-    public double d { get; set; }
-    public int o { get; set; }
-    public int i { get; set; }
-    public string? p { get; set; }
-    public string? n { get; set; }
-    public object? c { get; set; }
-    public double a { get; set; }
+    [JsonPropertyName("t")]
+    public long Id { get; set; }
+
+    [JsonPropertyName("s")]
+    public double Latitude { get; set; }
+
+    [JsonPropertyName("d")]
+    public double Longitude { get; set; }
+
+    [JsonPropertyName("o")]
+    public int Status { get; set; }
+
+    [JsonPropertyName("i")]
+    public int Info { get; set; }
+
+    [JsonPropertyName("p")]
+    public string? Carrier { get; set; }
+
+    [JsonPropertyName("n")]
+    public string? Number { get; set; }
+
+    [JsonPropertyName("c")]
+    public object? Code { get; set; }
+
+    [JsonPropertyName("a")]
+    public double Angle { get; set; }
 }
